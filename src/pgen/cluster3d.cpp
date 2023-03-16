@@ -82,6 +82,10 @@ static int main_cluster_fixed, subhalo_gas, sphere_reflevel, res_flag = 0;
  * problem: 3d galaxy cluster
  */
 
+//========================================================================================
+//! \fn void Mesh::InitUserMeshData(ParameterInput *pin)
+//========================================================================================
+
 void Mesh::InitUserMeshData(ParameterInput *pin)
 {
 
