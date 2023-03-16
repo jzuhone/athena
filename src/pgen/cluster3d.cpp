@@ -65,19 +65,20 @@ void DiodeOuterX2(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, Fac
 void DiodeOuterX3(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, FaceField &b,
                   Real time, Real dt, int is, int ie, int js, int je, int ks, int ke);
 
-static Real *r1, *r2, *dens1, *dens2, *pres1, *pres2;
-static Real *grav1, *grav2, *gpot1, *gpot2;
-static int num_points1, num_points2, num_halo;
-static int NAx, NAy, NAz;
-static Real xctr1, xctr2, xctr3, xsub1, xsub2, xsub3, vsub1, vsub2, vsub3;
-static Real x1min, x1max, x2min, x2max, x3min, x3max, ref_radius2_sq;
-static Real xmain1, xmain2, xmain3, vmain1, vmain2, vmain3, dt_old;
-static Real oamain1, oamain2, oamain3, amain1, amain2, amain3;
-static Real oasub1, oasub2, oasub3, asub1, asub2, asub3, ref_radius1_sq;
-static Real *Ax, *Ay, *Az, *Axcoords, *Aycoords, *Azcoords, Adx, Ady, Adz;
-static Real r_scale, r_cut, min_refine_density, rmax1, rmax2, mass1, mass2;
-static int main_cluster_fixed, subhalo_gas, sphere_reflevel, res_flag = 0;
-
+namespace {
+  static Real *r1, *r2, *dens1, *dens2, *pres1, *pres2;
+  static Real *grav1, *grav2, *gpot1, *gpot2;
+  static int num_points1, num_points2, num_halo;
+  static int NAx, NAy, NAz;
+  static Real xctr1, xctr2, xctr3, xsub1, xsub2, xsub3, vsub1, vsub2, vsub3;
+  static Real x1min, x1max, x2min, x2max, x3min, x3max, ref_radius2_sq;
+  static Real xmain1, xmain2, xmain3, vmain1, vmain2, vmain3, dt_old;
+  static Real oamain1, oamain2, oamain3, amain1, amain2, amain3;
+  static Real oasub1, oasub2, oasub3, asub1, asub2, asub3, ref_radius1_sq;
+  static Real *Ax, *Ay, *Az, *Axcoords, *Aycoords, *Azcoords, Adx, Ady, Adz;  
+  static Real r_scale, r_cut, min_refine_density, rmax1, rmax2, mass1, mass2;
+  static int main_cluster_fixed, subhalo_gas, sphere_reflevel, res_flag = 0;
+}; // namespace
 /*----------------------------------------------------------------------------
  * problem: 3d galaxy cluster
  */
@@ -343,24 +344,24 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin)
     for (int kk = 0; kk < nsubzones; kk++) {
       Real xx3 = pcoord->x3f(k) + (kk+0.5)*pcoord->dx3v(k)*nsubzninv;
       for (int jj = 0; jj < nsubzones; jj++) {
-	Real xx2 = pcoord->x2f(j) + (jj+0.5)*pcoord->dx2v(j)*nsubzninv;
-	for (int ii = 0; ii < nsubzones; ii++) {
-	  Real xx1 = pcoord->x1f(i) + (ii+0.5)*pcoord->dx1v(i)*nsubzninv;
-	  
-	  Real rr1 = sqrt(SQR(xx1-xmain1)+SQR(xx2-xmain2)+SQR(xx3-xmain3));
-	  Real dens_sample = interpolate(dens1, num_points1, r1, rr1);
-	  Real pres_sample = interpolate(pres1, num_points1, r1, rr1);
+	      Real xx2 = pcoord->x2f(j) + (jj+0.5)*pcoord->dx2v(j)*nsubzninv;
+	      for (int ii = 0; ii < nsubzones; ii++) {
+          Real xx1 = pcoord->x1f(i) + (ii+0.5)*pcoord->dx1v(i)*nsubzninv;
+          
+          Real rr1 = sqrt(SQR(xx1-xmain1)+SQR(xx2-xmain2)+SQR(xx3-xmain3));
+          Real dens_sample = interpolate(dens1, num_points1, r1, rr1);
+          Real pres_sample = interpolate(pres1, num_points1, r1, rr1);
 
-	  if (num_halo == 2 && subhalo_gas == 1) {
-	    Real rr2 = sqrt(SQR(xx1-xsub1)+SQR(xx2-xsub2)+SQR(xx3-xsub3));
-	    dens_sample += interpolate(dens2, num_points2, r2, rr2);
-	    pres_sample += interpolate(pres2, num_points2, r2, rr2);
-	  }
+          if (num_halo == 2 && subhalo_gas == 1) {
+            Real rr2 = sqrt(SQR(xx1-xsub1)+SQR(xx2-xsub2)+SQR(xx3-xsub3));
+            dens_sample += interpolate(dens2, num_points2, r2, rr2);
+            pres_sample += interpolate(pres2, num_points2, r2, rr2);
+          }
 
-	  sum_dens += dens_sample;
-	  sum_pres += pres_sample;
+          sum_dens += dens_sample;
+          sum_pres += pres_sample;
 
-	}
+	      }
       }
     }
 
@@ -400,29 +401,29 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin)
       xl3 = pcoord->x3f(k);
       for (int j=js; j<=je+1; j++) {
         xl2 = pcoord->x2f(j);
-	for (int i=is; i<=ie+1; i++) {
+	      for (int i=is; i<=ie+1; i++) {
           xl1 = pcoord->x1f(i);
   
-	  for (int ii = 0; ii < sample_res; ii++) {
-	    Real dxx1 = (ii+0.5)*dx1*sample_fact;
-	    Grid_Ax(k,j,i) += VecPot(Ax,xl1+dxx1,xl2,xl3);
-	  }
-	  
-	  for (int jj = 0; jj < sample_res; jj++) {
-	    Real dxx2 = (jj+0.5)*dx2*sample_fact;
-	    Grid_Ay(k,j,i) += VecPot(Ay,xl1,xl2+dxx2,xl3);
-	  }
-	  
-	  for (int kk = 0; kk < sample_res; kk++) {
-	    Real dxx3 = (kk+0.5)*dx3*sample_fact;
-	    Grid_Az(k,j,i) += VecPot(Az,xl1,xl2,xl3+dxx3);
-	  }
-	  
-	  Grid_Ax(k,j,i) *= sample_fact;
-	  Grid_Ay(k,j,i) *= sample_fact;
-	  Grid_Az(k,j,i) *= sample_fact;
-	  
-	}
+          for (int ii = 0; ii < sample_res; ii++) {
+            Real dxx1 = (ii+0.5)*dx1*sample_fact;
+            Grid_Ax(k,j,i) += VecPot(Ax,xl1+dxx1,xl2,xl3);
+          }
+          
+          for (int jj = 0; jj < sample_res; jj++) {
+            Real dxx2 = (jj+0.5)*dx2*sample_fact;
+            Grid_Ay(k,j,i) += VecPot(Ay,xl1,xl2+dxx2,xl3);
+          }
+          
+          for (int kk = 0; kk < sample_res; kk++) {
+            Real dxx3 = (kk+0.5)*dx3*sample_fact;
+            Grid_Az(k,j,i) += VecPot(Az,xl1,xl2,xl3+dxx3);
+          }
+          
+          Grid_Ax(k,j,i) *= sample_fact;
+          Grid_Ay(k,j,i) *= sample_fact;
+          Grid_Az(k,j,i) *= sample_fact;
+          
+        }
       }
     }
 
@@ -550,14 +551,14 @@ void ClusterAccel(MeshBlock *pmb, const Real time, const Real dt,
       src = -(x1flux(IDN,k,j,i)*(phic - phil) +
               x1flux(IDN,k,j,i+1)*(phir - phic))/pmb->pcoord->dx1v(i);
       if (main_cluster_fixed == 1 && num_halo == 2) {
-	Real gl = -noninertial_accel(1, pmb->pcoord->x1f(i),
-				     pmb->pcoord->x2v(j),
-				     pmb->pcoord->x3v(k));
-	Real gr = -noninertial_accel(1, pmb->pcoord->x1f(i+1),
-				     pmb->pcoord->x2v(j),
-				     pmb->pcoord->x3v(k));
-	src += (x1flux(IDN,k,j,i)*gl +
-		x1flux(IDN,k,j,i+1)*gr);
+        Real gl = -noninertial_accel(1, pmb->pcoord->x1f(i),
+                  pmb->pcoord->x2v(j),
+                  pmb->pcoord->x3v(k));
+        Real gr = -noninertial_accel(1, pmb->pcoord->x1f(i+1),
+                  pmb->pcoord->x2v(j),
+                  pmb->pcoord->x3v(k));
+        src += (x1flux(IDN,k,j,i)*gl +
+          x1flux(IDN,k,j,i+1)*gr);
       }
       cons(IEN,k,j,i) += src*dt;
     }
@@ -580,14 +581,14 @@ void ClusterAccel(MeshBlock *pmb, const Real time, const Real dt,
       src = -(x2flux(IDN,k,j,i)*(phic - phil) +
               x2flux(IDN,k,j+1,i)*(phir - phic))/pmb->pcoord->dx2v(j);
       if (main_cluster_fixed == 1 && num_halo == 2) {
-	Real gl = -noninertial_accel(2, pmb->pcoord->x1v(i),
-				     pmb->pcoord->x2f(j),
-				     pmb->pcoord->x3v(k));
-	Real gr = -noninertial_accel(2, pmb->pcoord->x1v(i),
-				     pmb->pcoord->x2f(j+1),
-				     pmb->pcoord->x3v(k));
-	src += (x2flux(IDN,k,j,i)*gl +
-		x2flux(IDN,k,j+1,i)*gr);
+        Real gl = -noninertial_accel(2, pmb->pcoord->x1v(i),
+                  pmb->pcoord->x2f(j),
+                  pmb->pcoord->x3v(k));
+        Real gr = -noninertial_accel(2, pmb->pcoord->x1v(i),
+                  pmb->pcoord->x2f(j+1),
+                  pmb->pcoord->x3v(k));
+        src += (x2flux(IDN,k,j,i)*gl +
+                x2flux(IDN,k,j+1,i)*gr);
       }
       cons(IEN,k,j,i) += src*dt;
     }
@@ -610,14 +611,14 @@ void ClusterAccel(MeshBlock *pmb, const Real time, const Real dt,
       src = -(x3flux(IDN,k,j,i)*(phic - phil) +
               x3flux(IDN,k+1,j,i)*(phir - phic))/pmb->pcoord->dx3v(k);
       if (main_cluster_fixed == 1 && num_halo == 2) {
-	Real gl = -noninertial_accel(3, pmb->pcoord->x1v(i),
-				     pmb->pcoord->x2v(j),
-				     pmb->pcoord->x3f(k));
-	Real gr = -noninertial_accel(3, pmb->pcoord->x1v(i),
-				     pmb->pcoord->x2v(j),
-				     pmb->pcoord->x3f(k+1));
-	src += (x3flux(IDN,k,j,i)*gl +
-		x3flux(IDN,k+1,j,i)*gr);
+        Real gl = -noninertial_accel(3, pmb->pcoord->x1v(i),
+                  pmb->pcoord->x2v(j),
+                  pmb->pcoord->x3f(k));
+        Real gr = -noninertial_accel(3, pmb->pcoord->x1v(i),
+                  pmb->pcoord->x2v(j),
+                  pmb->pcoord->x3f(k+1));
+        src += (x3flux(IDN,k,j,i)*gl +
+		            x3flux(IDN,k+1,j,i)*gr);
       }
       cons(IEN,k,j,i) += src*dt;
     }
@@ -1449,7 +1450,7 @@ Real ComputeCurvature(MeshBlock *pmb, int ivar)
     for (int j=pmb->js-1; j<=pmb->je+1; j++) {
       for (int i=pmb->is-1; i<=pmb->ie+1; i++) {
         du(0,k,j,i) = (w(ivar,k,j,i+1) - w(ivar,k,j,i-1))*delx1;
-	au(0,k,j,i) = (std::abs(w(ivar,k,j,i+1)) + std::abs(w(ivar,k,j,i-1)))*delx1;
+	      au(0,k,j,i) = (std::abs(w(ivar,k,j,i+1)) + std::abs(w(ivar,k,j,i-1)))*delx1;
         du(1,k,j,i) = (w(ivar,k,j+1,i) - w(ivar,k,j-1,i))*delx2;
         au(1,k,j,i) = (std::abs(w(ivar,k,j+1,i)) + std::abs(w(ivar,k,j-1,i)))*delx2;
         du(2,k,j,i) = (w(ivar,k+1,j,i) - w(ivar,k-1,j,i))*delx3;
@@ -1464,31 +1465,31 @@ Real ComputeCurvature(MeshBlock *pmb, int ivar)
 
         du2(0) = (du(0,k,j,i+1) - du(0,k,j,i-1))*delx1;
         du3(0) = (std::abs(du(0,k,j,i+1)) + std::abs(du(0,k,j,i-1)))*delx1;
-	du4(0) = (au(0,k,j,i+1) + au(0,k,j,i-1))*delx1;
+	      du4(0) = (au(0,k,j,i+1) + au(0,k,j,i-1))*delx1;
 
         du2(1) = (du(0,k,j+1,i) - du(0,k,j-1,i))*delx2;
         du3(1) = (std::abs(du(0,k,j+1,i)) + std::abs(du(0,k,j-1,i)))*delx2;
-	du4(1) = (au(0,k,j+1,i) + au(0,k,j-1,i))*delx2;
+	      du4(1) = (au(0,k,j+1,i) + au(0,k,j-1,i))*delx2;
 
         du2(2) = (du(1,k,j,i+1) - du(1,k,j,i-1))*delx1;
         du3(2) = (std::abs(du(1,k,j,i+1)) + std::abs(du(1,k,j,i-1)))*delx1;
-	du4(2) = (au(1,k,j,i+1) + au(1,k,j,i-1))*delx1;
+	      du4(2) = (au(1,k,j,i+1) + au(1,k,j,i-1))*delx1;
 
         du2(3) = (du(1,k,j+1,i) - du(1,k,j-1,i))*delx2;
         du3(3) = (std::abs(du(1,k,j+1,i)) + std::abs(du(1,k,j-1,i)))*delx2;
-	du4(3) = (au(1,k,j+1,i) + au(1,k,j-1,i))*delx2;
+	      du4(3) = (au(1,k,j+1,i) + au(1,k,j-1,i))*delx2;
 
         du2(4) = (du(0,k+1,j,i) - du(0,k-1,j,i))*delx3;
         du3(4) = (std::abs(du(0,k+1,j,i)) + std::abs(du(0,k-1,j,i)))*delx3;
-	du4(4) = (au(0,k+1,j,i) + au(0,k-1,j,i))*delx3;
+	      du4(4) = (au(0,k+1,j,i) + au(0,k-1,j,i))*delx3;
 
         du2(5) = (du(1,k+1,j,i) - du(1,k-1,j,i))*delx3;
         du3(5) = (std::abs(du(1,k+1,j,i)) + std::abs(du(1,k-1,j,i)))*delx3;
-	du4(5) = (au(1,k+1,j,i) + au(1,k-1,j,i))*delx3;
+	      du4(5) = (au(1,k+1,j,i) + au(1,k-1,j,i))*delx3;
 
         du2(6) = (du(2,k,j,i+1) - du(2,k,j,i-1))*delx1;
         du3(6) = (std::abs(du(2,k,j,i+1)) + std::abs(du(2,k,j,i-1)))*delx1;
-	du4(6) = (au(2,k,j,i+1) + au(2,k,j,i-1))*delx1;
+	      du4(6) = (au(2,k,j,i+1) + au(2,k,j,i-1))*delx1;
 
         du2(7) = (du(2,k,j+1,i) - du(2,k,j-1,i))*delx2;
         du3(7) = (std::abs(du(2,k,j+1,i)) + std::abs(du(2,k,j-1,i)))*delx2;
@@ -1496,7 +1497,7 @@ Real ComputeCurvature(MeshBlock *pmb, int ivar)
 
         du2(8) = (du(2,k+1,j,i) - du(2,k-1,j,i))*delx3;
         du3(8) = (std::abs(du(2,k+1,j,i)) + std::abs(du(2,k-1,j,i)))*delx3;
-	du4(8) = (au(2,k+1,j,i) + au(2,k-1,j,i))*delx3;
+	      du4(8) = (au(2,k+1,j,i) + au(2,k-1,j,i))*delx3;
 
         Real num = 0.0;
         Real denom = 0.0;
