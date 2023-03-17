@@ -32,38 +32,26 @@
 #define ONE_THIRD (1./3.)
 #define ONE_SIXTH (1./6.)
 
-Real interpolate(Real a[], int n, Real x[], Real xx);
-void ReadNumPoints(std::string filename, int *num_points);
-void ReadProfiles(std::string filename, Real r[],
-		   Real dens[], Real pres[], Real gpot[], Real grav[]);
-Real VecPot(Real *field, Real xx, Real yy, Real zz);
-void ReadFieldPoints(std::string filename, int *nbx, int *nby, int *nbz);
-void ReadField(std::string filename, Real ax[], Real ay[], Real az[],
-	 	           Real xcoords[], Real ycoords[], Real zcoords[]);
-Real TSCWeight(Real x);
-Real interp_grav_pot(const Real x1, const Real x2, const Real x3);
-Real noninertial_accel(int axis, const Real x1, const Real x2, const Real x3);
-void update_accel();
-void ClusterAccel(MeshBlock *pmb, const Real time, const Real dt,
-		  const AthenaArray<Real> &prim, 
-		  const AthenaArray<Real> &bcc, 
-		  AthenaArray<Real> &cons);
 int RefinementCondition(MeshBlock *pmb);
 Real ComputeCurvature(MeshBlock *pmb, int ivar);
 
 // BCs of grid in each dimension
+void ClusterAccel(
+    MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<Real> &prim,
+    const AthenaArray<Real> &prim_scalar, const AthenaArray<Real> &bcc,
+    AthenaArray<Real> &cons, AthenaArray<Real> &cons_scalar);
 void DiodeInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, FaceField &b,
-                  Real time, Real dt, int is, int ie, int js, int je, int ks, int ke);
+                  Real time, Real dt, int il, int iu, int jl, int ju, int kl, int ku, int ngh);
 void DiodeInnerX2(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, FaceField &b,
-                  Real time, Real dt, int is, int ie, int js, int je, int ks, int ke);
+                  Real time, Real dt, int il, int iu, int jl, int ju, int kl, int ku, int ngh);
 void DiodeInnerX3(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, FaceField &b,
-                  Real time, Real dt, int is, int ie, int js, int je, int ks, int ke);
+                  Real time, Real dt, int il, int iu, int jl, int ju, int kl, int ku, int ngh);
 void DiodeOuterX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, FaceField &b,
-                  Real time, Real dt, int is, int ie, int js, int je, int ks, int ke);
+                  Real time, Real dt, int il, int iu, int jl, int ju, int kl, int ku, int ngh);
 void DiodeOuterX2(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, FaceField &b,
-                  Real time, Real dt, int is, int ie, int js, int je, int ks, int ke);
+                  Real time, Real dt, int il, int iu, int jl, int ju, int kl, int ku, int ngh);
 void DiodeOuterX3(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, FaceField &b,
-                  Real time, Real dt, int is, int ie, int js, int je, int ks, int ke);
+                  Real time, Real dt, int il, int iu, int jl, int ju, int kl, int ku, int ngh);
 
 namespace {
   static Real *r1, *r2, *dens1, *dens2, *pres1, *pres2;
@@ -78,7 +66,20 @@ namespace {
   static Real *Ax, *Ay, *Az, *Axcoords, *Aycoords, *Azcoords, Adx, Ady, Adz;  
   static Real r_scale, r_cut, min_refine_density, rmax1, rmax2, mass1, mass2;
   static int main_cluster_fixed, subhalo_gas, sphere_reflevel, res_flag = 0;
-}; // namespace
+  Real interpolate(Real a[], int n, Real x[], Real xx);
+  void ReadNumPoints(std::string filename, int *num_points);
+  void ReadProfiles(std::string filename, Real r[],
+        Real dens[], Real pres[], Real gpot[], Real grav[]);
+  Real VecPot(Real *field, Real xx, Real yy, Real zz);
+  void ReadFieldPoints(std::string filename, int *nbx, int *nby, int *nbz);
+  void ReadField(std::string filename, Real ax[], Real ay[], Real az[],
+                Real xcoords[], Real ycoords[], Real zcoords[]);
+  Real TSCWeight(Real x);
+  Real interp_grav_pot(const Real x1, const Real x2, const Real x3);
+  Real noninertial_accel(int axis, const Real x1, const Real x2, const Real x3);
+  void update_accel();
+} // namespace
+
 /*----------------------------------------------------------------------------
  * problem: 3d galaxy cluster
  */
@@ -305,12 +306,12 @@ void Mesh::InitUserMeshData(ParameterInput *pin)
   if (Globals::my_rank == 0)
     std::cout << "Finished with initialization." << std::endl;
 
-  EnrollUserBoundaryFunction(INNER_X1, DiodeInnerX1);
-  EnrollUserBoundaryFunction(OUTER_X1, DiodeOuterX1);
-  EnrollUserBoundaryFunction(INNER_X2, DiodeInnerX2);
-  EnrollUserBoundaryFunction(OUTER_X2, DiodeOuterX2);
-  EnrollUserBoundaryFunction(INNER_X3, DiodeInnerX3);
-  EnrollUserBoundaryFunction(OUTER_X3, DiodeOuterX3);
+  EnrollUserBoundaryFunction(BoundaryFace::inner_x1, DiodeInnerX1);
+  EnrollUserBoundaryFunction(BoundaryFace::outer_x1, DiodeOuterX1);
+  EnrollUserBoundaryFunction(BoundaryFace::inner_x2, DiodeInnerX2);
+  EnrollUserBoundaryFunction(BoundaryFace::outer_x2, DiodeOuterX2);
+  EnrollUserBoundaryFunction(BoundaryFace::inner_x3, DiodeInnerX3);
+  EnrollUserBoundaryFunction(BoundaryFace::outer_x3, DiodeOuterX3);
   EnrollUserExplicitSourceFunction(ClusterAccel);
   if (adaptive == true)
     EnrollUserRefinementCondition(RefinementCondition);
@@ -487,10 +488,105 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin)
   return;
 }
 
-void ClusterAccel(MeshBlock *pmb, const Real time, const Real dt,
-		  const AthenaArray<Real> &prim, 
-		  const AthenaArray<Real> &bcc, 
-		  AthenaArray<Real> &cons)
+void MeshBlock::UserWorkInLoop(void)
+{
+
+  Real dt = pmy_mesh->dt;
+  Real time = pmy_mesh->time;
+  int ncycle = pmy_mesh->ncycle;
+  Real wterm, woldterm;
+    
+  if (num_halo == 1 || lid > 0)
+    return;
+
+  if (Globals::my_rank == 0) {
+
+    if (main_cluster_fixed == 0) {
+      std::ofstream fp_main;
+      fp_main.open("main_trajectory.dat", std::ios::app);
+      fp_main << time << "\t" << xmain1 << "\t" << xmain2 << "\t"
+              << xmain3 << "\t" << vmain1 << "\t" << vmain2 << "\t"
+              << vmain3 << "\t" << amain1 << "\t" << amain2 << "\t"
+              << amain3 << "\t" << oamain1 << "\t" << oamain2 << "\t"
+              << oamain3 << std::endl;
+      fp_main.close();
+    }
+    
+    std::ofstream fp_sub;
+    fp_sub.open("sub_trajectory.dat", std::ios::app);
+    fp_sub << time << "\t" << "\t" << xsub1 << "\t" << xsub2 << "\t"
+           << xsub3 << "\t" << vsub1 << "\t" << vsub2 << "\t"
+           << vsub3 << "\t" << asub1 << "\t" << asub2 << "\t"
+           << asub3 << "\t" << oasub1 << "\t" << oasub2 << "\t"
+           << oasub3 << std::endl;
+    fp_sub.close();
+
+  }
+
+  if (ncycle == 0) {
+    wterm = 0.5*dt;
+    woldterm = 0.0;
+  } else {
+    wterm = 0.5*dt + ONE_THIRD*dt_old + ONE_SIXTH*dt*dt/dt_old;
+    woldterm = ONE_SIXTH*(dt_old*dt_old-dt*dt)/dt_old;
+  }
+
+  if (main_cluster_fixed == 0) {
+    vmain1 += wterm*amain1 + woldterm*oamain1;
+    vmain2 += wterm*amain2 + woldterm*oamain2;
+    vmain3 += wterm*amain3 + woldterm*oamain3;
+    
+    xmain1 += dt*vmain1;
+    xmain2 += dt*vmain2;
+    xmain3 += dt*vmain3;
+    
+    oamain1 = amain1;
+    oamain2 = amain2;
+    oamain3 = amain3;
+  }
+
+  vsub1 += wterm*asub1 + woldterm*oasub1;
+  vsub2 += wterm*asub2 + woldterm*oasub2;
+  vsub3 += wterm*asub3 + woldterm*oasub3;
+
+  xsub1 += dt*vsub1;
+  xsub2 += dt*vsub2;
+  xsub3 += dt*vsub3;
+
+  oasub1 = asub1;
+  oasub2 = asub2;
+  oasub3 = asub3;
+
+  update_accel();
+ 
+  dt_old = dt;
+
+  pmy_mesh->ruser_mesh_data[0](0) = xmain1;
+  pmy_mesh->ruser_mesh_data[0](1) = xmain2;
+  pmy_mesh->ruser_mesh_data[0](2) = xmain3;
+  pmy_mesh->ruser_mesh_data[1](0) = vmain1;
+  pmy_mesh->ruser_mesh_data[1](1) = vmain2;
+  pmy_mesh->ruser_mesh_data[1](2) = vmain3;
+  pmy_mesh->ruser_mesh_data[2](0) = oamain1;
+  pmy_mesh->ruser_mesh_data[2](1) = oamain2;
+  pmy_mesh->ruser_mesh_data[2](2) = oamain3;
+  pmy_mesh->ruser_mesh_data[3](0) = xsub1;
+  pmy_mesh->ruser_mesh_data[3](1) = xsub2;
+  pmy_mesh->ruser_mesh_data[3](2) = xsub3;
+  pmy_mesh->ruser_mesh_data[4](0) = vsub1;
+  pmy_mesh->ruser_mesh_data[4](1) = vsub2;
+  pmy_mesh->ruser_mesh_data[4](2) = vsub3;
+  pmy_mesh->ruser_mesh_data[5](0) = oasub1;
+  pmy_mesh->ruser_mesh_data[5](1) = oasub2;
+  pmy_mesh->ruser_mesh_data[5](2) = oasub3;
+  pmy_mesh->ruser_mesh_data[6](0) = dt_old;
+ 
+}
+
+void ClusterAccel(
+    MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<Real> &prim,
+    const AthenaArray<Real> &prim_scalar, const AthenaArray<Real> &bcc,
+    AthenaArray<Real> &cons, AthenaArray<Real> &cons_scalar)
 {
 
   AthenaArray<Real> &x1flux = pmb->phydro->flux[X1DIR];
@@ -627,384 +723,344 @@ void ClusterAccel(MeshBlock *pmb, const Real time, const Real dt,
  
 }
 
-void MeshBlock::UserWorkInLoop(void)
-{
+namespace {
 
-  Real dt = pmy_mesh->dt;
-  Real time = pmy_mesh->time;
-  int ncycle = pmy_mesh->ncycle;
-  Real wterm, woldterm;
+  void update_accel()
+  {
+
+    Real gmain, gsub;
+
+    Real xc = xsub1-xmain1;
+    Real yc = xsub2-xmain2;
+    Real zc = xsub3-xmain3;
+    Real rc = sqrt(SQR(xc)+SQR(yc)+SQR(zc));
+
+    if (rc < rmax1) {
+      gmain = -interpolate(grav1, num_points1, r1, rc);
+    } else {
+      gmain = -mass1/(rc*rc);
+    }
+    asub1 = gmain*xc/rc;
+    asub2 = gmain*yc/rc;
+    asub3 = gmain*zc/rc;
+
+    if (rc < rmax2) {
+      gsub = -interpolate(grav2, num_points2, r2, rc);
+    } else {
+      gsub = -mass2/(rc*rc);
+    }
+    amain1 = -gsub*xc/rc;
+    amain2 = -gsub*yc/rc;
+    amain3 = -gsub*zc/rc;
+
+  }
+
+  Real interp_grav_pot(const Real x1, const Real x2, const Real x3)
+  {
+
+    Real local_gpot;
     
-  if (num_halo == 1 || lid > 0)
+    Real rr_main = sqrt(SQR(x1-xmain1)+SQR(x2-xmain2)+SQR(x3-xmain3));
+    if (rr_main < rmax1) {
+      local_gpot = -interpolate(gpot1, num_points1, r1, rr_main);
+    } else {
+      local_gpot = -mass1/rr_main;
+    }
+    
+    if (num_halo == 2) {
+      Real rr_sub = sqrt(SQR(x1-xsub1)+SQR(x2-xsub2)+SQR(x3-xsub3));
+      if (rr_sub < rmax2) {
+        local_gpot -= interpolate(gpot2, num_points2, r2, rr_sub);
+      } else {
+        local_gpot -= mass2/rr_sub;
+      }
+    }
+
+    return local_gpot;
+
+  }
+
+  Real noninertial_accel(int axis, const Real x1, const Real x2, const Real x3)
+  {
+
+    Real accel, rr_main;
+
+    if (axis == 1) {
+      accel = amain1;
+    } else if (axis == 2) {
+      accel = amain2;
+    } else if (axis == 3) {
+      accel = amain3;
+    }
+
+    rr_main = sqrt(SQR(x1-xmain1)+SQR(x2-xmain2)+SQR(x3-xmain3));
+    if (rr_main > r_cut) {
+      accel *= std::exp(-(rr_main-r_cut)/r_scale);
+    }
+
+    return accel;
+
+  }
+
+  Real interpolate(Real a[], int n, Real x[], Real xx)
+  {
+
+    Real ret;
+
+    Real r = (log10(xx)-log10(x[0]))*n/(log10(x[n-1])-log10(x[0]));
+    int i = (int)r;
+    if (a[i] > 0.0) {
+      ret = a[i]*pow(a[i+1]/a[i], r-(Real)i);
+    } else {
+      ret = 0.0;
+    }
+
+    return ret;
+
+  }
+
+  void ReadFieldPoints(std::string filename, int *nbx, int *nby, int *nbz)
+  {
+
+    hid_t   file_id, dataset, dataspace;
+    herr_t  status;
+    hsize_t dims[3], maxdims[3];
+
+    int rank;
+
+    file_id = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+
+    dataset   = H5Dopen(file_id, "/vector_potential_x", H5P_DEFAULT);
+    dataspace = H5Dget_space(dataset);
+    rank      = H5Sget_simple_extent_dims(dataspace, dims, maxdims);
+
+    *nbx = (int)dims[0];
+    *nby = (int)dims[1];
+    *nbz = (int)dims[2];
+
+    H5Fclose(file_id);
+
     return;
 
-  if (Globals::my_rank == 0) {
+  }
 
-    if (main_cluster_fixed == 0) {
-      std::ofstream fp_main;
-      fp_main.open("main_trajectory.dat", std::ios::app);
-      fp_main << time << "\t" << xmain1 << "\t" << xmain2 << "\t"
-              << xmain3 << "\t" << vmain1 << "\t" << vmain2 << "\t"
-              << vmain3 << "\t" << amain1 << "\t" << amain2 << "\t"
-              << amain3 << "\t" << oamain1 << "\t" << oamain2 << "\t"
-              << oamain3 << std::endl;
-      fp_main.close();
+  void ReadNumPoints(std::string filename, int *num_points)
+  {
+
+    hid_t   file_id, dataset, dataspace;
+    herr_t  status;
+    hsize_t dims[1], maxdims[1];
+
+    int rank;
+
+    file_id = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+
+    dataset   = H5Dopen(file_id, "/fields/radius", H5P_DEFAULT);
+    dataspace = H5Dget_space(dataset);
+    rank      = H5Sget_simple_extent_dims(dataspace, dims, maxdims);
+
+    *num_points = (int)dims[0];
+
+    H5Fclose(file_id);
+
+    return;
+
+  }
+
+  void ReadField(std::string filename, Real ax[], Real ay[], Real az[],
+      Real xcoords[], Real ycoords[], Real zcoords[])
+  {
+
+    hid_t   file_id, dataset, dataspace, memspace;
+    herr_t  status;
+
+    file_id = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+
+    std::cout << "Read xcoords." << std::endl;
+
+    dataset = H5Dopen(file_id, "/xcoord", H5P_DEFAULT);
+    status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
+                    H5S_ALL, H5P_DEFAULT, xcoords);
+    H5Dclose(dataset);
+
+    std::cout << "Read ycoords." << std::endl;
+
+    dataset = H5Dopen(file_id, "/ycoord", H5P_DEFAULT);
+    status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
+                    H5S_ALL, H5P_DEFAULT, ycoords);
+    H5Dclose(dataset);
+
+    std::cout << "Read zcoords." << std::endl;
+
+    dataset   = H5Dopen(file_id, "/zcoord", H5P_DEFAULT);
+    status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
+                    H5S_ALL, H5P_DEFAULT, zcoords);
+    H5Dclose(dataset);
+
+    std::cout << "Read vector field." << std::endl;
+
+    dataset = H5Dopen(file_id, "/vector_potential_x", H5P_DEFAULT);
+    status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
+                    H5S_ALL, H5P_DEFAULT, ax);
+    H5Dclose(dataset);
+
+    dataset = H5Dopen(file_id, "/vector_potential_y", H5P_DEFAULT);
+    status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
+        H5S_ALL, H5P_DEFAULT, ay);
+    H5Dclose(dataset);
+
+    dataset = H5Dopen(file_id, "/vector_potential_z", H5P_DEFAULT);
+    status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
+                    H5S_ALL, H5P_DEFAULT, az);
+    H5Dclose(dataset);
+
+    H5Fclose(file_id);
+
+    return;
+
+  }
+
+  void ReadProfiles(std::string filename, Real r[],
+        Real dens[], Real pres[], Real gpot[],
+        Real grav[])
+  {
+
+    hid_t   file_id, dataset;
+    herr_t  status;
+
+    file_id = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+
+    dataset   = H5Dopen(file_id, "/fields/radius", H5P_DEFAULT);
+    status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
+        H5S_ALL, H5P_DEFAULT, r);
+    H5Dclose(dataset);
+
+    dataset   = H5Dopen(file_id, "/fields/density", H5P_DEFAULT);
+    status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
+        H5S_ALL, H5P_DEFAULT, dens);
+    H5Dclose(dataset);
+
+    dataset   = H5Dopen(file_id, "/fields/pressure", H5P_DEFAULT);
+    status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
+        H5S_ALL, H5P_DEFAULT, pres);
+    H5Dclose(dataset);
+
+    dataset   = H5Dopen(file_id, "/fields/gravitational_potential", 
+                        H5P_DEFAULT);
+    status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
+        H5S_ALL, H5P_DEFAULT, gpot);
+    H5Dclose(dataset);
+
+    dataset   = H5Dopen(file_id, "/fields/gravitational_field",
+                        H5P_DEFAULT);
+    status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
+                    H5S_ALL, H5P_DEFAULT, grav);
+    H5Dclose(dataset);
+
+    H5Fclose(file_id);
+
+    return;
+
+  }
+
+  Real VecPot(Real *field, Real xx, Real yy, Real zz)
+  {
+
+    if (xx < Axcoords[0]-0.5*Adx || xx > Axcoords[NAx-1]+0.5*Adx ||
+        yy < Aycoords[0]-0.5*Ady || yy > Aycoords[NAy-1]+0.5*Ady ||
+        zz < Azcoords[0]-0.5*Adz || zz > Azcoords[NAz-1]+0.5*Adz) {
+      return 0.0;
     }
-    
-    std::ofstream fp_sub;
-    fp_sub.open("sub_trajectory.dat", std::ios::app);
-    fp_sub << time << "\t" << "\t" << xsub1 << "\t" << xsub2 << "\t"
-           << xsub3 << "\t" << vsub1 << "\t" << vsub2 << "\t"
-           << vsub3 << "\t" << asub1 << "\t" << asub2 << "\t"
-           << asub3 << "\t" << oasub1 << "\t" << oasub2 << "\t"
-           << oasub3 << std::endl;
-    fp_sub.close();
+
+    int ii = (int)((xx-(Axcoords[0]-0.5*Adx))/Adx);
+    int jj = (int)((yy-(Aycoords[0]-0.5*Ady))/Ady);
+    int kk = (int)((zz-(Azcoords[0]-0.5*Adz))/Adz);
+
+    Real pot = 0.0;
+
+    for (int i = -1; i <= 1; i++) {
+      Real dx = (xx-Axcoords[ii+i])/Adx;
+      for (int j = -1; j <= 1; j++) {
+        Real dy = (yy-Aycoords[jj+j])/Ady;
+        for (int k = -1; k <= 1; k++) {
+          Real dz = (zz-Azcoords[kk+k])/Adz;
+          int idx = ii+i + (jj+j)*NAx + (kk+k)*NAx*NAy;
+          pot += field[idx]*TSCWeight(dx)*TSCWeight(dy)*TSCWeight(dz);
+
+        }
+      }
+    }
+
+    return pot;
 
   }
 
-  if (ncycle == 0) {
-    wterm = 0.5*dt;
-    woldterm = 0.0;
-  } else {
-    wterm = 0.5*dt + ONE_THIRD*dt_old + ONE_SIXTH*dt*dt/dt_old;
-    woldterm = ONE_SIXTH*(dt_old*dt_old-dt*dt)/dt_old;
-  }
+  Real TSCWeight(Real x)
+  {
 
-  if (main_cluster_fixed == 0) {
-    vmain1 += wterm*amain1 + woldterm*oamain1;
-    vmain2 += wterm*amain2 + woldterm*oamain2;
-    vmain3 += wterm*amain3 + woldterm*oamain3;
-    
-    xmain1 += dt*vmain1;
-    xmain2 += dt*vmain2;
-    xmain3 += dt*vmain3;
-    
-    oamain1 = amain1;
-    oamain2 = amain2;
-    oamain3 = amain3;
-  }
+    Real weight;
 
-  vsub1 += wterm*asub1 + woldterm*oasub1;
-  vsub2 += wterm*asub2 + woldterm*oasub2;
-  vsub3 += wterm*asub3 + woldterm*oasub3;
+    Real xx = fabs(x);
 
-  xsub1 += dt*vsub1;
-  xsub2 += dt*vsub2;
-  xsub3 += dt*vsub3;
-
-  oasub1 = asub1;
-  oasub2 = asub2;
-  oasub3 = asub3;
-
-  update_accel();
- 
-  dt_old = dt;
-
-  pmy_mesh->ruser_mesh_data[0](0) = xmain1;
-  pmy_mesh->ruser_mesh_data[0](1) = xmain2;
-  pmy_mesh->ruser_mesh_data[0](2) = xmain3;
-  pmy_mesh->ruser_mesh_data[1](0) = vmain1;
-  pmy_mesh->ruser_mesh_data[1](1) = vmain2;
-  pmy_mesh->ruser_mesh_data[1](2) = vmain3;
-  pmy_mesh->ruser_mesh_data[2](0) = oamain1;
-  pmy_mesh->ruser_mesh_data[2](1) = oamain2;
-  pmy_mesh->ruser_mesh_data[2](2) = oamain3;
-  pmy_mesh->ruser_mesh_data[3](0) = xsub1;
-  pmy_mesh->ruser_mesh_data[3](1) = xsub2;
-  pmy_mesh->ruser_mesh_data[3](2) = xsub3;
-  pmy_mesh->ruser_mesh_data[4](0) = vsub1;
-  pmy_mesh->ruser_mesh_data[4](1) = vsub2;
-  pmy_mesh->ruser_mesh_data[4](2) = vsub3;
-  pmy_mesh->ruser_mesh_data[5](0) = oasub1;
-  pmy_mesh->ruser_mesh_data[5](1) = oasub2;
-  pmy_mesh->ruser_mesh_data[5](2) = oasub3;
-  pmy_mesh->ruser_mesh_data[6](0) = dt_old;
- 
-}
-
-void update_accel()
-{
-
-  Real gmain, gsub;
-
-  Real xc = xsub1-xmain1;
-  Real yc = xsub2-xmain2;
-  Real zc = xsub3-xmain3;
-  Real rc = sqrt(SQR(xc)+SQR(yc)+SQR(zc));
-
-  if (rc < rmax1) {
-    gmain = -interpolate(grav1, num_points1, r1, rc);
-  } else {
-    gmain = -mass1/(rc*rc);
-  }
-  asub1 = gmain*xc/rc;
-  asub2 = gmain*yc/rc;
-  asub3 = gmain*zc/rc;
-
-  if (rc < rmax2) {
-    gsub = -interpolate(grav2, num_points2, r2, rc);
-  } else {
-    gsub = -mass2/(rc*rc);
-  }
-  amain1 = -gsub*xc/rc;
-  amain2 = -gsub*yc/rc;
-  amain3 = -gsub*zc/rc;
-
-}
-
-Real interp_grav_pot(const Real x1, const Real x2, const Real x3)
-{
-
-  Real local_gpot;
-  
-  Real rr_main = sqrt(SQR(x1-xmain1)+SQR(x2-xmain2)+SQR(x3-xmain3));
-  if (rr_main < rmax1) {
-    local_gpot = -interpolate(gpot1, num_points1, r1, rr_main);
-  } else {
-    local_gpot = -mass1/rr_main;
-  }
-  
-  if (num_halo == 2) {
-    Real rr_sub = sqrt(SQR(x1-xsub1)+SQR(x2-xsub2)+SQR(x3-xsub3));
-    if (rr_sub < rmax2) {
-      local_gpot -= interpolate(gpot2, num_points2, r2, rr_sub);
+    if (xx <= 0.5) {
+      weight = 0.75 - xx*xx;
+    } else if (xx >= 0.5 && xx <= 1.5) {
+      weight = 0.5*SQR(1.5-xx);
     } else {
-      local_gpot -= mass2/rr_sub;
+      weight = 0.0;
     }
+
+    return weight;
+
   }
 
-  return local_gpot;
-
-}
-
-Real noninertial_accel(int axis, const Real x1, const Real x2, const Real x3)
-{
-
-  Real accel, rr_main;
-
-  if (axis == 1) {
-    accel = amain1;
-  } else if (axis == 2) {
-    accel = amain2;
-  } else if (axis == 3) {
-    accel = amain3;
-  }
-
-  rr_main = sqrt(SQR(x1-xmain1)+SQR(x2-xmain2)+SQR(x3-xmain3));
-  if (rr_main > r_cut) {
-    accel *= std::exp(-(rr_main-r_cut)/r_scale);
-  }
-
-  return accel;
-
-}
-
-Real interpolate(Real a[], int n, Real x[], Real xx)
-{
-
-  Real ret;
-
-  Real r = (log10(xx)-log10(x[0]))*n/(log10(x[n-1])-log10(x[0]));
-  int i = (int)r;
-  if (a[i] > 0.0) {
-    ret = a[i]*pow(a[i+1]/a[i], r-(Real)i);
-  } else {
-    ret = 0.0;
-  }
-
-  return ret;
-
-}
-
-void ReadFieldPoints(std::string filename, int *nbx, int *nby, int *nbz)
-{
-
-  hid_t   file_id, dataset, dataspace;
-  herr_t  status;
-  hsize_t dims[3], maxdims[3];
-
-  int rank;
-
-  file_id = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
-
-  dataset   = H5Dopen(file_id, "/vector_potential_x", H5P_DEFAULT);
-  dataspace = H5Dget_space(dataset);
-  rank      = H5Sget_simple_extent_dims(dataspace, dims, maxdims);
-
-  *nbx = (int)dims[0];
-  *nby = (int)dims[1];
-  *nbz = (int)dims[2];
-
-  H5Fclose(file_id);
-
-  return;
-
-}
-
-void ReadNumPoints(std::string filename, int *num_points)
-{
-
-  hid_t   file_id, dataset, dataspace;
-  herr_t  status;
-  hsize_t dims[1], maxdims[1];
-
-  int rank;
-
-  file_id = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
-
-  dataset   = H5Dopen(file_id, "/fields/radius", H5P_DEFAULT);
-  dataspace = H5Dget_space(dataset);
-  rank      = H5Sget_simple_extent_dims(dataspace, dims, maxdims);
-
-  *num_points = (int)dims[0];
-
-  H5Fclose(file_id);
-
-  return;
-
-}
-
-void ReadField(std::string filename, Real ax[], Real ay[], Real az[],
-		 Real xcoords[], Real ycoords[], Real zcoords[])
-{
-
-  hid_t   file_id, dataset, dataspace, memspace;
-  herr_t  status;
-
-  file_id = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
-
-  std::cout << "Read xcoords." << std::endl;
-
-  dataset = H5Dopen(file_id, "/xcoord", H5P_DEFAULT);
-  status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
-                   H5S_ALL, H5P_DEFAULT, xcoords);
-  H5Dclose(dataset);
-
-  std::cout << "Read ycoords." << std::endl;
-
-  dataset = H5Dopen(file_id, "/ycoord", H5P_DEFAULT);
-  status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
-                   H5S_ALL, H5P_DEFAULT, ycoords);
-  H5Dclose(dataset);
-
-  std::cout << "Read zcoords." << std::endl;
-
-  dataset   = H5Dopen(file_id, "/zcoord", H5P_DEFAULT);
-  status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
-                   H5S_ALL, H5P_DEFAULT, zcoords);
-  H5Dclose(dataset);
-
-  std::cout << "Read vector field." << std::endl;
-
-  dataset = H5Dopen(file_id, "/vector_potential_x", H5P_DEFAULT);
-  status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
-                   H5S_ALL, H5P_DEFAULT, ax);
-  H5Dclose(dataset);
-
-  dataset = H5Dopen(file_id, "/vector_potential_y", H5P_DEFAULT);
-  status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
-		   H5S_ALL, H5P_DEFAULT, ay);
-  H5Dclose(dataset);
-
-  dataset = H5Dopen(file_id, "/vector_potential_z", H5P_DEFAULT);
-  status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
-                   H5S_ALL, H5P_DEFAULT, az);
-  H5Dclose(dataset);
-
-  H5Fclose(file_id);
-
-  return;
-
-}
-
-void ReadProfiles(std::string filename, Real r[],
-		   Real dens[], Real pres[], Real gpot[],
-		   Real grav[])
-{
-
-  hid_t   file_id, dataset;
-  herr_t  status;
-
-  file_id = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
-
-  dataset   = H5Dopen(file_id, "/fields/radius", H5P_DEFAULT);
-  status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
-		   H5S_ALL, H5P_DEFAULT, r);
-  H5Dclose(dataset);
-
-  dataset   = H5Dopen(file_id, "/fields/density", H5P_DEFAULT);
-  status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
-		   H5S_ALL, H5P_DEFAULT, dens);
-  H5Dclose(dataset);
-
-  dataset   = H5Dopen(file_id, "/fields/pressure", H5P_DEFAULT);
-  status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
-		   H5S_ALL, H5P_DEFAULT, pres);
-  H5Dclose(dataset);
-
-  dataset   = H5Dopen(file_id, "/fields/gravitational_potential", 
-                      H5P_DEFAULT);
-  status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
-		   H5S_ALL, H5P_DEFAULT, gpot);
-  H5Dclose(dataset);
-
-  dataset   = H5Dopen(file_id, "/fields/gravitational_field",
-                      H5P_DEFAULT);
-  status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
-                   H5S_ALL, H5P_DEFAULT, grav);
-  H5Dclose(dataset);
-
-  H5Fclose(file_id);
-
-  return;
-
-}
+} // namespace
 
 void DiodeInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, FaceField &b,
-                  Real time, Real dt, int is, int ie, int js, int je, int ks, int ke)
+                  Real time, Real dt, int il, int iu, int jl, int ju, int kl, int ku, int ngh)
 {
   // copy hydro variables into ghost zones
-  for (int n=0; n<(NHYDRO); ++n) {
-    for (int k=ks; k<=ke; ++k) {
-    for (int j=js; j<=je; ++j) {
+  for (int n=0; n<ngh; ++n) {
+    for (int k=kl; k<=ku; ++k) {
+    for (int j=jl; j<=ju; ++j) {
 #pragma simd
-      for (int i=1; i<=(NGHOST); ++i) {
-        prim(n,k,j,is-i) = prim(n,k,j,is);
+      for (int i=1; i<=ngh; ++i) {
+        prim(n,k,j,il-i) = prim(n,k,j,il);
       }
     }}
   }
 
-  for (int k=ks; k<=ke; ++k) {
-  for (int j=js; j<=je; ++j) {
+  for (int k=kl; k<=ku; ++k) {
+  for (int j=jl; j<=ju; ++j) {
 #pragma simd
-    for (int i=1; i<=(NGHOST); ++i) {
-      prim(IVX,k,j,is-i) = std::min(prim(IVX,k,j,is-i), 0.0);
+    for (int i=1; i<=ngh; ++i) {
+      prim(IVX,k,j,il-i) = std::min(prim(IVX,k,j,il-i), 0.0);
     }
   }}
 
   // copy face-centered magnetic fields into ghost zones
   if (MAGNETIC_FIELDS_ENABLED) {
-    for (int k=ks; k<=ke; ++k) {
-    for (int j=js; j<=je; ++j) {
+    for (int k=kl; k<=ku; ++k) {
+    for (int j=jl; j<=ju; ++j) {
 #pragma simd
-      for (int i=1; i<=(NGHOST); ++i) {
-        b.x1f(k,j,(is-i)) = std::min(b.x1f(k,j,is), 0.0);
+      for (int i=1; i<=ngh; ++i) {
+        b.x1f(k,j,(il-i)) = b.x1f(k,j,il);
       }
     }}
 
-    for (int k=ks; k<=ke; ++k) {
-    for (int j=js; j<=je+1; ++j) {
+    for (int k=kl; k<=ku; ++k) {
+    for (int j=jl; j<=ju+1; ++j) {
 #pragma simd
-      for (int i=1; i<=(NGHOST); ++i) {
-        b.x2f(k,j,(is-i)) = b.x2f(k,j,is);
+      for (int i=1; i<=ngh; ++i) {
+        b.x2f(k,j,(il-i)) = b.x2f(k,j,il);
       }
     }}
 
-    for (int k=ks; k<=ke+1; ++k) {
-    for (int j=js; j<=je; ++j) {
+    for (int k=kl; k<=ku+1; ++k) {
+    for (int j=jl; j<=ju; ++j) {
 #pragma simd
-      for (int i=1; i<=(NGHOST); ++i) {
-        b.x3f(k,j,(is-i)) = b.x3f(k,j,is);
+      for (int i=1; i<=ngh; ++i) {
+        b.x3f(k,j,(il-i)) = b.x3f(k,j,il);
       }
     }}
   }
@@ -1013,50 +1069,50 @@ void DiodeInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, Fac
 }
 
 void DiodeOuterX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, FaceField &b,
-                  Real time, Real dt, int is, int ie, int js, int je, int ks, int ke)
+                  Real time, Real dt, int il, int iu, int jl, int ju, int kl, int ku, int ngh)
 {
   // copy hydro variables into ghost zones
   for (int n=0; n<(NHYDRO); ++n) {
-    for (int k=ks; k<=ke; ++k) {
-    for (int j=js; j<=je; ++j) {
+    for (int k=kl; k<=ku; ++k) {
+    for (int j=jl; j<=ju; ++j) {
 #pragma simd
-      for (int i=1; i<=(NGHOST); ++i) {
-        prim(n,k,j,ie+i) = prim(n,k,j,ie);
+      for (int i=1; i<=ngh; ++i) {
+        prim(n,k,j,iu+i) = prim(n,k,j,iu);
       }
     }}
   }
 
-  for (int k=ks; k<=ke; ++k) {
-  for (int j=js; j<=je; ++j) {
+  for (int k=kl; k<=ku; ++k) {
+  for (int j=jl; j<=ju; ++j) {
 #pragma simd
-    for (int i=1; i<=(NGHOST); ++i) {
-      prim(IVX,k,j,ie+i) = std::max(prim(IVX,k,j,ie+i), 0.0);
+    for (int i=1; i<=ngh; ++i) {
+      prim(IVX,k,j,iu+i) = std::max(prim(IVX,k,j,iu+i), 0.0);
     }
   }}
 
   // copy face-centered magnetic fields into ghost zones
   if (MAGNETIC_FIELDS_ENABLED) {
-    for (int k=ks; k<=ke; ++k) {
-    for (int j=js; j<=je; ++j) {
+    for (int k=kl; k<=ku; ++k) {
+    for (int j=jl; j<=ju; ++j) {
 #pragma simd
-      for (int i=1; i<=(NGHOST); ++i) {
-        b.x1f(k,j,(ie+i+1)) = std::max(b.x1f(k,j,(ie+1)), 0.0);
+      for (int i=1; i<=ngh; ++i) {
+        b.x1f(k,j,(iu+i+1)) = b.x1f(k,j,(iu+1));
       }
     }}
 
-    for (int k=ks; k<=ke; ++k) {
-    for (int j=js; j<=je+1; ++j) {
+    for (int k=kl; k<=ku; ++k) {
+    for (int j=jl; j<=ju+1; ++j) {
 #pragma simd
-      for (int i=1; i<=(NGHOST); ++i) {
-        b.x2f(k,j,(ie+i)) = b.x2f(k,j,ie);
+      for (int i=1; i<=ngh; ++i) {
+        b.x2f(k,j,(iu+i)) = b.x2f(k,j,iu);
       }
     }}
 
-    for (int k=ks; k<=ke+1; ++k) {
-    for (int j=js; j<=je; ++j) {
+    for (int k=kl; k<=ku+1; ++k) {
+    for (int j=jl; j<=ju; ++j) {
 #pragma simd
-      for (int i=1; i<=(NGHOST); ++i) {
-        b.x3f(k,j,(ie+i)) = b.x3f(k,j,ie);
+      for (int i=1; i<=ngh; ++i) {
+        b.x3f(k,j,(iu+i)) = b.x3f(k,j,iu);
       }
     }}
   }
@@ -1065,50 +1121,50 @@ void DiodeOuterX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, Fac
 }
 
 void DiodeInnerX2(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, FaceField &b,
-                  Real time, Real dt, int is, int ie, int js, int je, int ks, int ke)
+                  Real time, Real dt, int il, int iu, int jl, int ju, int kl, int ku, int ngh)
 {
   // copy hydro variables into ghost zones
   for (int n=0; n<(NHYDRO); ++n) {
-    for (int k=ks; k<=ke; ++k) {
-    for (int j=1; j<=(NGHOST); ++j) {
+    for (int k=kl; k<=ku; ++k) {
+    for (int j=1; j<=ngh; ++j) {
 #pragma simd
-      for (int i=is; i<=ie; ++i) {
-        prim(n,k,js-j,i) = prim(n,k,js,i);
+      for (int i=il; i<=iu; ++i) {
+        prim(n,k,jl-j,i) = prim(n,k,jl,i);
       }
     }}
   }
 
-  for (int k=ks; k<=ke; ++k) {
-  for (int j=1; j<=(NGHOST); ++j) {
+  for (int k=kl; k<=ku; ++k) {
+  for (int j=1; j<=ngh; ++j) {
 #pragma simd
-    for (int i=is; i<=ie; ++i) {
-      prim(IVY,k,js-j,i) = std::min(prim(IVY,k,js-j,i), 0.0);
+    for (int i=il; i<=iu; ++i) {
+      prim(IVY,k,jl-j,i) = std::min(prim(IVY,k,jl-j,i), 0.0);
     }
   }}
 
   // copy face-centered magnetic fields into ghost zones
   if (MAGNETIC_FIELDS_ENABLED) {
-    for (int k=ks; k<=ke; ++k) {
-    for (int j=1; j<=(NGHOST); ++j) {
+    for (int k=kl; k<=ku; ++k) {
+    for (int j=1; j<=ngh; ++j) {
 #pragma simd
-      for (int i=is; i<=ie+1; ++i) {
-        b.x1f(k,(js-j),i) = b.x1f(k,js,i);
+      for (int i=il; i<=iu+1; ++i) {
+        b.x1f(k,(jl-j),i) = b.x1f(k,jl,i);
       }
     }}
 
-    for (int k=ks; k<=ke; ++k) {
-    for (int j=1; j<=(NGHOST); ++j) {
+    for (int k=kl; k<=ku; ++k) {
+    for (int j=1; j<=ngh; ++j) {
 #pragma simd
-      for (int i=is; i<=ie; ++i) {
-        b.x2f(k,(js-j),i) = std::min(b.x2f(k,js,i), 0.0);
+      for (int i=il; i<=iu; ++i) {
+        b.x2f(k,(jl-j),i) = b.x2f(k,jl,i);
       }
     }}
 
-    for (int k=ks; k<=ke+1; ++k) {
-    for (int j=1; j<=(NGHOST); ++j) {
+    for (int k=kl; k<=ku+1; ++k) {
+    for (int j=1; j<=ngh; ++j) {
 #pragma simd
-      for (int i=is; i<=ie; ++i) {
-        b.x3f(k,(js-j),i) = b.x3f(k,js,i);
+      for (int i=il; i<=iu; ++i) {
+        b.x3f(k,(jl-j),i) = b.x3f(k,jl,i);
       }
     }}
   }
@@ -1117,50 +1173,50 @@ void DiodeInnerX2(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, Fac
 }
 
 void DiodeOuterX2(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, FaceField &b,
-                  Real time, Real dt, int is, int ie, int js, int je, int ks, int ke)
+                  Real time, Real dt, int il, int iu, int jl, int ju, int kl, int ku, int ngh)
 {
   // copy hydro variables into ghost zones
   for (int n=0; n<(NHYDRO); ++n) {
-    for (int k=ks; k<=ke; ++k) {
-    for (int j=1; j<=(NGHOST); ++j) {
+    for (int k=kl; k<=ku; ++k) {
+    for (int j=1; j<=ngh; ++j) {
 #pragma simd
-      for (int i=is; i<=ie; ++i) {
-        prim(n,k,je+j,i) = prim(n,k,je,i);
+      for (int i=il; i<=iu; ++i) {
+        prim(n,k,ju+j,i) = prim(n,k,ju,i);
       }
     }}
   }
 
-  for (int k=ks; k<=ke; ++k) {
-  for (int j=1; j<=(NGHOST); ++j) {
+  for (int k=kl; k<=ku; ++k) {
+  for (int j=1; j<=ngh; ++j) {
 #pragma simd
-    for (int i=is; i<=ie; ++i) {
-      prim(IVY,k,je+j,i) = std::max(prim(IVY,k,je+j,i), 0.0);
+    for (int i=il; i<=iu; ++i) {
+      prim(IVY,k,ju+j,i) = std::max(prim(IVY,k,ju+j,i), 0.0);
     }
   }}
 
   // copy face-centered magnetic fields into ghost zones
   if (MAGNETIC_FIELDS_ENABLED) {
-    for (int k=ks; k<=ke; ++k) {
-    for (int j=1; j<=(NGHOST); ++j) {
+    for (int k=kl; k<=ku; ++k) {
+    for (int j=1; j<=ngh; ++j) {
 #pragma simd
-      for (int i=is; i<=ie+1; ++i) {
-        b.x1f(k,(je+j),i) = b.x1f(k,(je  ),i);
+      for (int i=il; i<=iu+1; ++i) {
+        b.x1f(k,(ju+j),i) = b.x1f(k,(ju  ),i);
       }
     }}
 
-    for (int k=ks; k<=ke; ++k) {
-    for (int j=1; j<=(NGHOST); ++j) {
+    for (int k=kl; k<=ku; ++k) {
+    for (int j=1; j<=ngh; ++j) {
 #pragma simd
-      for (int i=is; i<=ie; ++i) {
-        b.x2f(k,(je+j+1),i) = std::max(b.x2f(k,(je+1),i), 0.0);
+      for (int i=il; i<=iu; ++i) {
+        b.x2f(k,(ju+j+1),i) = b.x2f(k,(ju+1),i);
       }
     }}
 
-    for (int k=ks; k<=ke+1; ++k) {
-    for (int j=1; j<=(NGHOST); ++j) {
+    for (int k=kl; k<=ku+1; ++k) {
+    for (int j=1; j<=ngh; ++j) {
 #pragma simd
-      for (int i=is; i<=ie; ++i) {
-        b.x3f(k,(je+j  ),i) = b.x3f(k,(je  ),i);
+      for (int i=il; i<=iu; ++i) {
+        b.x3f(k,(ju+j  ),i) = b.x3f(k,(ju  ),i);
       }
     }}
   }
@@ -1169,50 +1225,50 @@ void DiodeOuterX2(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, Fac
 }
 
 void DiodeInnerX3(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, FaceField &b,
-                  Real time, Real dt, int is, int ie, int js, int je, int ks, int ke)
+                  Real time, Real dt, int il, int iu, int jl, int ju, int kl, int ku, int ngh)
 {
   // copy hydro variables into ghost zones
   for (int n=0; n<(NHYDRO); ++n) {
-    for (int k=1; k<=(NGHOST); ++k) {
-    for (int j=js; j<=je; ++j) {
+    for (int k=1; k<=ngh; ++k) {
+    for (int j=jl; j<=ju; ++j) {
 #pragma simd
-      for (int i=is; i<=ie; ++i) {
-        prim(n,ks-k,j,i) = prim(n,ks,j,i);
+      for (int i=il; i<=iu; ++i) {
+        prim(n,kl-k,j,i) = prim(n,kl,j,i);
       }
     }}
   }
   
-  for (int k=1; k<=(NGHOST); ++k) {
-  for (int j=js; j<=je; ++j) {
+  for (int k=1; k<=ngh; ++k) {
+  for (int j=jl; j<=ju; ++j) {
 #pragma simd
-    for (int i=is; i<=ie; ++i) {
-      prim(IVZ,ks-k,j,i) = std::min(prim(IVZ,ks-k,j,i), 0.0);
+    for (int i=il; i<=iu; ++i) {
+      prim(IVZ,kl-k,j,i) = std::min(prim(IVZ,kl-k,j,i), 0.0);
     }
   }}
  
   // copy face-centered magnetic fields into ghost zones
   if (MAGNETIC_FIELDS_ENABLED) {
-    for (int k=1; k<=(NGHOST); ++k) {
-    for (int j=js; j<=je; ++j) {
+    for (int k=1; k<=ngh; ++k) {
+    for (int j=jl; j<=ju; ++j) {
 #pragma simd
-      for (int i=is; i<=ie+1; ++i) {
-        b.x1f((ks-k),j,i) = b.x1f(ks,j,i);
+      for (int i=il; i<=iu+1; ++i) {
+        b.x1f((kl-k),j,i) = b.x1f(kl,j,i);
       }
     }}
 
-    for (int k=1; k<=(NGHOST); ++k) {
-    for (int j=js; j<=je+1; ++j) {
+    for (int k=1; k<=ngh; ++k) {
+    for (int j=jl; j<=ju+1; ++j) {
 #pragma simd
-      for (int i=is; i<=ie; ++i) {
-        b.x2f((ks-k),j,i) = b.x2f(ks,j,i);
+      for (int i=il; i<=iu; ++i) {
+        b.x2f((kl-k),j,i) = b.x2f(kl,j,i);
       }
     }}
 
-    for (int k=1; k<=(NGHOST); ++k) {
-    for (int j=js; j<=je; ++j) {
+    for (int k=1; k<=ngh; ++k) {
+    for (int j=jl; j<=ju; ++j) {
 #pragma simd
-      for (int i=is; i<=ie; ++i) {
-        b.x3f((ks-k),j,i) = std::min(b.x3f(ks,j,i), 0.0);
+      for (int i=il; i<=iu; ++i) {
+        b.x3f((kl-k),j,i) = b.x3f(kl,j,i);
       }
     }}
   }
@@ -1221,106 +1277,55 @@ void DiodeInnerX3(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, Fac
 }
 
 void DiodeOuterX3(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, FaceField &b,
-                  Real time, Real dt, int is, int ie, int js, int je, int ks, int ke)
+                  Real time, Real dt, int il, int iu, int jl, int ju, int kl, int ku, int ngh)
 {
   // copy hydro variables into ghost zones
   for (int n=0; n<(NHYDRO); ++n) {
-    for (int k=1; k<=(NGHOST); ++k) {
-    for (int j=js; j<=je; ++j) {
+    for (int k=1; k<=ngh; ++k) {
+    for (int j=jl; j<=ju; ++j) {
 #pragma simd
-      for (int i=is; i<=ie; ++i) {
-        prim(n,ke+k,j,i) = prim(n,ke,j,i);
+      for (int i=il; i<=iu; ++i) {
+        prim(n,ku+k,j,i) = prim(n,ku,j,i);
       }
     }}
   }
 
-  for (int k=1; k<=(NGHOST); ++k) {
-  for (int j=js; j<=je; ++j) {
+  for (int k=1; k<=ngh; ++k) {
+  for (int j=jl; j<=ju; ++j) {
 #pragma simd
-    for (int i=is; i<=ie; ++i) {
-      prim(IVZ,ke+k,j,i) = std::max(prim(IVZ,ke+k,j,i), 0.0);
+    for (int i=il; i<=iu; ++i) {
+      prim(IVZ,ku+k,j,i) = std::max(prim(IVZ,ku+k,j,i), 0.0);
     }
   }}
 
   // copy face-centered magnetic fields into ghost zones
   if (MAGNETIC_FIELDS_ENABLED) {
-    for (int k=1; k<=(NGHOST); ++k) {
-    for (int j=js; j<=je; ++j) {
+    for (int k=1; k<=ngh; ++k) {
+    for (int j=jl; j<=ju; ++j) {
 #pragma simd
-      for (int i=is; i<=ie+1; ++i) {
-        b.x1f((ke+k  ),j,i) = b.x1f((ke  ),j,i);
+      for (int i=il; i<=iu+1; ++i) {
+        b.x1f((ku+k  ),j,i) = b.x1f((ku  ),j,i);
       }
     }}
 
-    for (int k=1; k<=(NGHOST); ++k) {
-    for (int j=js; j<=je; ++j) {
+    for (int k=1; k<=ngh; ++k) {
+    for (int j=jl; j<=ju; ++j) {
 #pragma simd
-      for (int i=is; i<=ie; ++i) {
-        b.x2f((ke+k  ),j,i) = b.x2f((ke  ),j,i);
+      for (int i=il; i<=iu; ++i) {
+        b.x2f((ku+k  ),j,i) = b.x2f((ku  ),j,i);
       }
     }}
 
-    for (int k=1; k<=(NGHOST); ++k) {
-    for (int j=js; j<=je; ++j) {
+    for (int k=1; k<=ngh; ++k) {
+    for (int j=jl; j<=ju; ++j) {
 #pragma simd
-      for (int i=is; i<=ie; ++i) {
-        b.x3f((ke+k+1),j,i) = std::max(b.x3f((ke+1),j,i), 0.0);
+      for (int i=il; i<=iu; ++i) {
+        b.x3f((ku+k+1),j,i) = b.x3f((ku+1),j,i);
       }
     }}
   }
 
   return;
-}
-
-Real VecPot(Real *field, Real xx, Real yy, Real zz)
-{
-
-  if (xx < Axcoords[0]-0.5*Adx || xx > Axcoords[NAx-1]+0.5*Adx ||
-      yy < Aycoords[0]-0.5*Ady || yy > Aycoords[NAy-1]+0.5*Ady ||
-      zz < Azcoords[0]-0.5*Adz || zz > Azcoords[NAz-1]+0.5*Adz) {
-    return 0.0;
-  }
-
-  int ii = (int)((xx-(Axcoords[0]-0.5*Adx))/Adx);
-  int jj = (int)((yy-(Aycoords[0]-0.5*Ady))/Ady);
-  int kk = (int)((zz-(Azcoords[0]-0.5*Adz))/Adz);
-
-  Real pot = 0.0;
-
-  for (int i = -1; i <= 1; i++) {
-    Real dx = (xx-Axcoords[ii+i])/Adx;
-    for (int j = -1; j <= 1; j++) {
-      Real dy = (yy-Aycoords[jj+j])/Ady;
-      for (int k = -1; k <= 1; k++) {
-	      Real dz = (zz-Azcoords[kk+k])/Adz;
-        int idx = ii+i + (jj+j)*NAx + (kk+k)*NAx*NAy;
-        pot += field[idx]*TSCWeight(dx)*TSCWeight(dy)*TSCWeight(dz);
-
-      }
-    }
-  }
-
-  return pot;
-
-}
-
-Real TSCWeight(Real x)
-{
-
-  Real weight;
-
-  Real xx = fabs(x);
-
-  if (xx <= 0.5) {
-    weight = 0.75 - xx*xx;
-  } else if (xx >= 0.5 && xx <= 1.5) {
-    weight = 0.5*SQR(1.5-xx);
-  } else {
-    weight = 0.0;
-  }
-
-  return weight;
-
 }
 
 int RefinementCondition(MeshBlock *pmb)
