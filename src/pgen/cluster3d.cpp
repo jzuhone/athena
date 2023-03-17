@@ -31,6 +31,12 @@
 
 #define ONE_THIRD (1./3.)
 #define ONE_SIXTH (1./6.)
+#define RAD_CONV 3.2407792899999994e-22
+#define DENS_CONV 1.4775575897980712e+31
+#define PRES_CONV 1.54543684e+15
+#define GPOT_CONV 1.04594017e-16
+#define GRAV_CONV 322743.41425179
+#define VPOT_CONV 1.2740166e-14
 
 int RefinementCondition(MeshBlock *pmb);
 Real ComputeCurvature(MeshBlock *pmb, int ivar);
@@ -68,7 +74,7 @@ namespace {
   static int main_cluster_fixed, subhalo_gas, sphere_reflevel, res_flag = 0;
   Real interpolate(Real a[], int n, Real x[], Real xx);
   void ReadNumPoints(std::string filename, int *num_points);
-  void ReadProfiles(std::string filename, Real r[],
+  void ReadProfiles(int which, std::string filename, Real r[],
         Real dens[], Real pres[], Real gpot[], Real grav[]);
   Real VecPot(Real *field, Real xx, Real yy, Real zz);
   void ReadFieldPoints(std::string filename, int *nbx, int *nby, int *nbz);
@@ -194,12 +200,24 @@ void Mesh::InitUserMeshData(ParameterInput *pin)
   grav1 = new Real [num_points1];
 
   if (Globals::my_rank == 0) {
-    ReadProfiles(filename1, r1, dens1, pres1, gpot1, grav1);
+    ReadProfiles(1, filename1, r1, dens1, pres1, gpot1, grav1);
     for (int i = 0; i < num_points1; i++) {
       gpot1[i] *= -1.; 
       grav1[i] *= -1.;
     }
   }
+
+  if (r1[num_points1-1] > 1.0e10) {
+    // profiles are in CGS units
+    for (int i = 0; i < num_points1; i++) {
+      r1[i] *= RAD_CONV; 
+      dens1[i] *= DENS_CONV;
+      pres1[i] *= PRES_CONV;
+      gpot1[i] *= GPOT_CONV;
+      grav1[i] *= GRAV_CONV;
+    }
+  }
+
 #ifdef MPI_PARALLEL
   MPI_Bcast(r1, num_points1, MPI_ATHENA_REAL, 0, MPI_COMM_WORLD);
   MPI_Bcast(dens1, num_points1, MPI_ATHENA_REAL, 0, MPI_COMM_WORLD);
@@ -230,10 +248,21 @@ void Mesh::InitUserMeshData(ParameterInput *pin)
     grav2 = new Real [num_points2];
 
     if (Globals::my_rank == 0) {
-      ReadProfiles(filename2, r2, dens2, pres2, gpot2, grav2);
+      ReadProfiles(2, filename2, r2, dens2, pres2, gpot2, grav2);
       for (int i = 0; i < num_points2; i++) {
         gpot2[i] *= -1.;
         grav2[i] *= -1.;
+      }
+    }
+
+    if (r2[num_points2-1] > 1.0e10) {
+      // profiles are in CGS units
+      for (int i = 0; i < num_points2; i++) {
+        r2[i] *= RAD_CONV; 
+        dens2[i] *= DENS_CONV;
+        pres2[i] *= PRES_CONV;
+        gpot2[i] *= GPOT_CONV;
+        grav2[i] *= GRAV_CONV;
       }
     }
   
@@ -282,6 +311,21 @@ void Mesh::InitUserMeshData(ParameterInput *pin)
     if (Globals::my_rank == 0) {
       ReadField(mag_file, Ax, Ay, Az, Axcoords, Aycoords, Azcoords);
       std::cout << "Finished reading potential." << std::endl;
+    }
+
+    if (Axcoords[NAx-1]-Axcoords[0] > 1.0e10) {
+      // A-field is in cgs
+      for (int i=0; i < NAx; i++)
+        Axcoords[i] *= RAD_CONV;
+      for (int j=0; j < NAy; j++)
+        Aycoords[j] *= RAD_CONV;
+      for (int k=0; k < NAz; k++)
+        Azcoords[k] *= RAD_CONV;
+      for (int i=0; i < num_mag_points; i++) {
+        Ax[i] *= VPOT_CONV;
+        Ay[i] *= VPOT_CONV;
+        Az[i] *= VPOT_CONV;
+      }
     }
 
 #ifdef MPI_PARALLEL
@@ -920,7 +964,7 @@ namespace {
 
   }
 
-  void ReadProfiles(std::string filename, Real r[],
+  void ReadProfiles(int which, std::string filename, Real r[],
         Real dens[], Real pres[], Real gpot[],
         Real grav[])
   {
@@ -935,15 +979,17 @@ namespace {
         H5S_ALL, H5P_DEFAULT, r);
     H5Dclose(dataset);
 
-    dataset   = H5Dopen(file_id, "/fields/density", H5P_DEFAULT);
-    status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
-        H5S_ALL, H5P_DEFAULT, dens);
-    H5Dclose(dataset);
+    if (which == 1 || subhalo_gas == 1) {
+      dataset   = H5Dopen(file_id, "/fields/density", H5P_DEFAULT);
+      status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
+                      H5S_ALL, H5P_DEFAULT, dens);
+      H5Dclose(dataset);
 
-    dataset   = H5Dopen(file_id, "/fields/pressure", H5P_DEFAULT);
-    status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
-        H5S_ALL, H5P_DEFAULT, pres);
-    H5Dclose(dataset);
+      dataset   = H5Dopen(file_id, "/fields/pressure", H5P_DEFAULT);
+      status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
+                       H5S_ALL, H5P_DEFAULT, pres);
+      H5Dclose(dataset);
+    }
 
     dataset   = H5Dopen(file_id, "/fields/gravitational_potential", 
                         H5P_DEFAULT);
@@ -1020,7 +1066,7 @@ void DiodeInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, Fac
                   Real time, Real dt, int il, int iu, int jl, int ju, int kl, int ku, int ngh)
 {
   // copy hydro variables into ghost zones
-  for (int n=0; n<ngh; ++n) {
+  for (int n=0; n<(NHYDRO); ++n) {
     for (int k=kl; k<=ku; ++k) {
     for (int j=jl; j<=ju; ++j) {
 #pragma simd
