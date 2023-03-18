@@ -143,30 +143,32 @@ void Mesh::InitUserMeshData(ParameterInput *pin)
   } else {
     
     if (ncycle == 0) {
-      x_init = pin->GetReal("problem","x_init");
-      y_init = pin->GetReal("problem","y_init");
-      vx_init = pin->GetReal("problem","vx_init");
-      vy_init = pin->GetReal("problem","vy_init");
-      xsub1 = x_init+xctr1;
-      xsub2 = y_init+xctr2;
-      xsub3 = xctr3;
-      vmain1 = 0.0;
-      vmain2 = 0.0;
-      vmain3 = 0.0;
-      vsub1 = vx_init;
-      vsub2 = vy_init;
-      vsub3 = 0.0;
-      xmain1 = xctr1;
-      xmain2 = xctr2;
+      if (main_cluster_fixed) {
+        x_init1 = xctr1;
+        y_init1 = xctr2;
+        vx_init1 = 0.0;
+        vy_init1 = 0.0;
+      } else {
+        x_init1 = pin->GetOrAddReal("problem", "x_init1", xctr1);
+        y_init1 = pin->GetOrAddReal("problem", "y_init1", xctr2);
+        vx_init1 = pin->GetOrAddReal("problem", "vx_init1", 0.0);
+        vy_init1 = pin->GetOrAddReal("problem", "vy_init1", 0.0);
+      }
+      x_init2 = pin->GetReal("problem", "x_init2");
+      y_init2 = pin->GetReal("problem", "y_init2");
+      vx_init2 = pin->GetReal("problem", "vx_init2");
+      vy_init2 = pin->GetReal("problem", "vy_init2");
+      xmain1 = x_init1;
+      xmain2 = y_init1;
       xmain3 = xctr3;
-      xsub1 = x_init+xctr1;
-      xsub2 = y_init+xctr2;
+      xsub1 = x_init2;
+      xsub2 = y_init2;
       xsub3 = xctr3;
-      vmain1 = 0.0;
-      vmain2 = 0.0;
+      vmain1 = vx_init1;
+      vmain2 = vy_init1;
       vmain3 = 0.0;
-      vsub1 = vx_init;
-      vsub2 = vy_init;
+      vsub1 = vx_init2;
+      vsub2 = vy_init2;
       vsub3 = 0.0;
       oamain1 = 0.0;
       oamain2 = 0.0;
@@ -383,9 +385,10 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin)
   for (int j=js; j<=je; j++) {
   for (int i=is; i<=ie; i++) {
 
-    Real sum_dens = 0.0;
     Real sum_pres = 0.0;
-
+    Real sum_dens1 = 0.0;
+    Real sum_dens2 = 0.0;
+  
     for (int kk = 0; kk < nsubzones; kk++) {
       Real xx3 = pcoord->x3f(k) + (kk+0.5)*pcoord->dx3v(k)*nsubzninv;
       for (int jj = 0; jj < nsubzones; jj++) {
@@ -394,28 +397,26 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin)
           Real xx1 = pcoord->x1f(i) + (ii+0.5)*pcoord->dx1v(i)*nsubzninv;
           
           Real rr1 = sqrt(SQR(xx1-xmain1)+SQR(xx2-xmain2)+SQR(xx3-xmain3));
-          Real dens_sample = interpolate(dens1, num_points1, r1, rr1);
-          Real pres_sample = interpolate(pres1, num_points1, r1, rr1);
+          sum_dens1 += interpolate(dens1, num_points1, r1, rr1);
+          sum_pres = interpolate(pres1, num_points1, r1, rr1);
 
           if (num_halo == 2 && subhalo_gas == 1) {
             Real rr2 = sqrt(SQR(xx1-xsub1)+SQR(xx2-xsub2)+SQR(xx3-xsub3));
-            dens_sample += interpolate(dens2, num_points2, r2, rr2);
-            pres_sample += interpolate(pres2, num_points2, r2, rr2);
+            sum_dens2 += interpolate(dens2, num_points2, r2, rr2);
+            sum_pres += interpolate(pres2, num_points2, r2, rr2);
           }
-
-          sum_dens += dens_sample;
-          sum_pres += pres_sample;
 
 	      }
       }
     }
 
-    phydro->u(IDN,k,j,i) = sum_dens*nsubvolinv;
+    sum_dens1 *= nsubvolinv;
+    sum_dens2 *= nsubvolinv;
+  
+    phydro->u(IDN,k,j,i) = sum_dens1+sum_dens2;
     phydro->u(IEN,k,j,i) = sum_pres*nsubvolinv/gm1;
-
-    // Zero momenta initially
-    phydro->u(IM1,k,j,i) = 0.0;
-    phydro->u(IM2,k,j,i) = 0.0;
+    phydro->u(IM1,k,j,i) = sum_dens1*vmain1+sum_dens2*vsub1;
+    phydro->u(IM2,k,j,i) = sum_dens1*vmain2+sum_dens2*vsub2;
     phydro->u(IM3,k,j,i) = 0.0;
 
   }}}
