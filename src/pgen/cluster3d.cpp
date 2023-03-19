@@ -38,14 +38,11 @@
 #define GRAV_CONV 322743.41425179
 #define VPOT_CONV 1.2740166e-14
 
+// Refinement condition methods
 int RefinementCondition(MeshBlock *pmb);
 Real ComputeCurvature(MeshBlock *pmb, int ivar);
 
 // BCs of grid in each dimension
-void ClusterAccel(
-    MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<Real> &prim,
-    const AthenaArray<Real> &prim_scalar, const AthenaArray<Real> &bcc,
-    AthenaArray<Real> &cons, AthenaArray<Real> &cons_scalar);
 void DiodeInnerX1(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, FaceField &b,
                   Real time, Real dt, int il, int iu, int jl, int ju, int kl, int ku, int ngh);
 void DiodeInnerX2(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, FaceField &b,
@@ -59,27 +56,41 @@ void DiodeOuterX2(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, Fac
 void DiodeOuterX3(MeshBlock *pmb, Coordinates *pco, AthenaArray<Real> &prim, FaceField &b,
                   Real time, Real dt, int il, int iu, int jl, int ju, int kl, int ku, int ngh);
 
+// Gravitational acceleration function
+void ClusterAccel(MeshBlock *pmb, const Real time, const Real dt, const AthenaArray<Real> &prim,
+                  const AthenaArray<Real> &prim_scalar, const AthenaArray<Real> &bcc,
+                  AthenaArray<Real> &cons, AthenaArray<Real> &cons_scalar);
+
 namespace {
+  // Radial profiles of the cluster(s)
   static Real *r1, *r2, *dens1, *dens2, *pres1, *pres2;
   static Real *grav1, *grav2, *gpot1, *gpot2;
-  static int num_points1, num_points2, num_halo;
-  static int NAx, NAy, NAz;
+  static Real rmax1, rmax2, mass1, mass2;
+  static int num_points1, num_points2;
+  // Variables for the cluster trajectories
   static Real xctr1, xctr2, xctr3, xsub1, xsub2, xsub3, vsub1, vsub2, vsub3;
-  static Real x1min, x1max, x2min, x2max, x3min, x3max, ref_radius2_sq;
+  static Real x1min, x1max, x2min, x2max, x3min, x3max;
   static Real xmain1, xmain2, xmain3, vmain1, vmain2, vmain3, dt_old;
   static Real oamain1, oamain2, oamain3, amain1, amain2, amain3;
-  static Real oasub1, oasub2, oasub3, asub1, asub2, asub3, ref_radius1_sq;
-  static Real *Ax, *Ay, *Az, *Axcoords, *Aycoords, *Azcoords, Adx, Ady, Adz;  
-  static Real r_scale, r_cut, min_refine_density, rmax1, rmax2, mass1, mass2;
-  static int main_cluster_fixed, subhalo_gas, sphere_reflevel, res_flag = 0;
+  static Real oasub1, oasub2, oasub3, asub1, asub2, asub3;
+  // Variables and arrays for the magnetic field input
+  static int NAx, NAy, NAz;
+  static Real *Axcoords, *Aycoords, *Azcoords, Adx, Ady, Adz;  
+  static Real Axmin, Axmax, Aymin, Aymax, Azmin, Azmax;
+  // Runtime parameters
+  static int num_halo, main_cluster_fixed, subhalo_gas, sphere_reflevel;
+  static Real r_scale, r_cut, min_refine_density, ref_radius1_sq, ref_radius2_sq;
+  // Other parameters
+  static int res_flag = 0;
+  // Methods
   Real interpolate(Real a[], int n, Real x[], Real xx);
   void ReadNumPoints(std::string filename, int *num_points);
   void ReadProfiles(int which, std::string filename, Real r[],
-        Real dens[], Real pres[], Real gpot[], Real grav[]);
+                    Real dens[], Real pres[], Real gpot[], Real grav[]);
   Real VecPot(Real *field, Real xx, Real yy, Real zz);
   void ReadFieldPoints(std::string filename, int *nbx, int *nby, int *nbz);
-  void ReadField(std::string filename, Real ax[], Real ay[], Real az[],
-                Real xcoords[], Real ycoords[], Real zcoords[]);
+  void ReadFieldCoords(std::string filename, Real xcoords[], Real ycoords[], Real zcoords[]);
+  void ReadField(std::string filename, Real ax[], Real ay[], Real az[]);
   Real TSCWeight(Real x);
   Real interp_grav_pot(const Real x1, const Real x2, const Real x3);
   Real noninertial_accel(int axis, const Real x1, const Real x2, const Real x3);
@@ -304,15 +315,9 @@ void Mesh::InitUserMeshData(ParameterInput *pin)
     Aycoords = new Real [NAy];
     Azcoords = new Real [NAz];
 
-    int num_mag_points = NAx*NAy*NAz;
-
-    Ax = new Real [num_mag_points];
-    Ay = new Real [num_mag_points];
-    Az = new Real [num_mag_points];
-
     if (Globals::my_rank == 0) {
-      ReadField(mag_file, Ax, Ay, Az, Axcoords, Aycoords, Azcoords);
-      std::cout << "Finished reading potential." << std::endl;
+      ReadFieldCoords(mag_file, Axcoords, Aycoords, Azcoords);
+      std::cout << "Finished reading potential coordinates." << std::endl;
     }
 
     if (Axcoords[NAx-1]-Axcoords[0] > 1.0e10) {
@@ -331,9 +336,6 @@ void Mesh::InitUserMeshData(ParameterInput *pin)
     }
 
 #ifdef MPI_PARALLEL
-    MPI_Bcast(Ax, num_mag_points, MPI_ATHENA_REAL, 0, MPI_COMM_WORLD);
-    MPI_Bcast(Ay, num_mag_points, MPI_ATHENA_REAL, 0, MPI_COMM_WORLD);
-    MPI_Bcast(Az, num_mag_points, MPI_ATHENA_REAL, 0, MPI_COMM_WORLD);
     MPI_Bcast(Axcoords, NAx, MPI_ATHENA_REAL, 0, MPI_COMM_WORLD);
     MPI_Bcast(Aycoords, NAy, MPI_ATHENA_REAL, 0, MPI_COMM_WORLD);
     MPI_Bcast(Azcoords, NAz, MPI_ATHENA_REAL, 0, MPI_COMM_WORLD);
@@ -342,7 +344,22 @@ void Mesh::InitUserMeshData(ParameterInput *pin)
     Adx = Axcoords[1] - Axcoords[0];
     Ady = Aycoords[1] - Aycoords[0];
     Adz = Azcoords[1] - Azcoords[0];
-    
+    Axmin = Axcoord[0]-0.5*Adx;
+    Aymin = Aycoord[0]-0.5*Ady;
+    Azmin = Azcoord[0]-0.5*Adz;
+    Axmax = Axcoord[nAx-1]+0.5*Adx;
+    Aymax = Aycoord[nAy-1]+0.5*Ady;
+    Azmax = Azcoord[nAz-1]+0.5*Adz;
+
+    std::stringstream msg;
+
+    if ( mesh_size.x1min < Axmin+2*Adx || mesh_size.x1max >= Axmax-2*Adx ||
+         mesh_size.x2min < Aymin+2*Ady || mesh_size.x2max >= Aymax-2*Ady ||
+         mesh_size.x3min < Azmin+2*Adz || mesh_size.x3max >= Azmax-2*Adz ) {
+      msg << "Input grid is smaller than the simulation domain !!" << std::endl;
+      ATHENA_ERROR(msg);
+    }
+
   }
 
 #ifdef MPI_PARALLEL
@@ -423,18 +440,42 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin)
 
   if (MAGNETIC_FIELDS_ENABLED) {
 	  
-    AthenaArray<Real> Grid_Ax;
-    AthenaArray<Real> Grid_Ay;
-    AthenaArray<Real> Grid_Az;
+    AthenaArray<Real> Ax, Ay, Az;
+    double *Axf, *Ayf, *Azf;
 
-    int nx_tot = (ie-is)+1 + 2*(NGHOST);
-    int ny_tot = (je-js)+1 + 2*(NGHOST);
-    int nz_tot = (ke-ks)+1 + 2*(NGHOST);
+    // Compute the beginning and ending indices on the vector potential grid
+    // +/- 1 are necessary because we will be computing derivatives
 
-    Grid_Ax.NewAthenaArray(nz_tot,ny_tot,nx_tot);
-    Grid_Ay.NewAthenaArray(nz_tot,ny_tot,nx_tot);
-    Grid_Az.NewAthenaArray(nz_tot,ny_tot,nx_tot);    
-    
+    int ibegin = (int)((block_size.x1min-Axmin)/Adx)-2;
+    int jbegin = (int)((block_size.x2min-Aymin)/Ady)-2;
+    int kbegin = (int)((block_size.x3min-Azmin)/Adz)-2;
+
+    int iend   = (int)((block_size.x1max-Axmin)/Adx)+2;
+    int jend   = (int)((block_size.x2max-Aymin)/Ady)+2;
+    int kend   = (int)((block_size.x3max-Azmin)/Adz)+2;
+
+    int nlocx  = iend-ibegin+1;
+    int nlocy  = jend-jbegin+1;
+    int nlocz  = kend-kbegin+1;
+
+    int fdims[3] = { nlocx, nlocy, nlocz };
+    int fbegin[3] = { ibegin, jbegin, kbegin };
+    int nloc = nlocx*nlocy*nlocz;
+
+    Ax.NewAthenaArray(block_size.nx1,block_size.nx2,block_size.nx3);
+    Ay.NewAthenaArray(block_size.nx1,block_size.nx2,block_size.nx3);
+    Az.NewAthenaArray(block_size.nx1,block_size.nx2,block_size.nx3);
+    Ax.ZeroClear();
+    Ay.ZeroClear();
+    Az.ZeroClear();
+
+    Axf = new double [nloc];
+    Ayf = new double [nloc];
+    Azf = new double [nloc];
+
+    ReadField( mag_file_id, ibegin, jbegin, kbegin,
+               iend, jend, kend, Axf, Ayf, Azf );
+
     int sample_res  = (int)std::pow(2.0, pmy_mesh->max_level - loc.level);
     Real sample_fact = 1.0/sample_res;
     Real xl1, xl2, xl3;
@@ -452,22 +493,22 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin)
   
           for (int ii = 0; ii < sample_res; ii++) {
             Real dxx1 = (ii+0.5)*dx1*sample_fact;
-            Grid_Ax(k,j,i) += VecPot(Ax,xl1+dxx1,xl2,xl3);
+            Ax(k,j,i) += VecPot(Axf,xl1+dxx1,xl2,xl3);
           }
           
           for (int jj = 0; jj < sample_res; jj++) {
             Real dxx2 = (jj+0.5)*dx2*sample_fact;
-            Grid_Ay(k,j,i) += VecPot(Ay,xl1,xl2+dxx2,xl3);
+            Ay(k,j,i) += VecPot(Ayf,xl1,xl2+dxx2,xl3);
           }
           
           for (int kk = 0; kk < sample_res; kk++) {
             Real dxx3 = (kk+0.5)*dx3*sample_fact;
-            Grid_Az(k,j,i) += VecPot(Az,xl1,xl2,xl3+dxx3);
+            Az(k,j,i) += VecPot(Azf,xl1,xl2,xl3+dxx3);
           }
           
-          Grid_Ax(k,j,i) *= sample_fact;
-          Grid_Ay(k,j,i) *= sample_fact;
-          Grid_Az(k,j,i) *= sample_fact;
+          Ax(k,j,i) *= sample_fact;
+          Ay(k,j,i) *= sample_fact;
+          Az(k,j,i) *= sample_fact;
           
         }
       }
@@ -477,8 +518,8 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin)
     for (int j=js; j<=je; j++) {
       for (int i=is; i<=ie+1; i++) {
 
-      pfield->b.x1f(k,j,i) = (Grid_Az(k,j+1,i)-Grid_Az(k,j,i))/dx2 -
-	      (Grid_Ay(k+1,j,i)-Grid_Ay(k,j,i))/dx3;
+      pfield->b.x1f(k,j,i) = (Az(k,j+1,i)-Az(k,j,i))/dx2 -
+	      (Ay(k+1,j,i)-Ay(k,j,i))/dx3;
 
       }
     }
@@ -488,8 +529,8 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin)
     for (int j=js; j<=je+1; j++) {
       for (int i=is; i<=ie; i++) {
 
-      pfield->b.x2f(k,j,i) = (Grid_Ax(k+1,j,i)-Grid_Ax(k,j,i))/dx3 -
-        (Grid_Az(k,j,i+1)-Grid_Az(k,j,i))/dx1;
+      pfield->b.x2f(k,j,i) = (Ax(k+1,j,i)-Ax(k,j,i))/dx3 -
+        (Az(k,j,i+1)-Az(k,j,i))/dx1;
 
       }
     }
@@ -499,16 +540,20 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin)
     for (int j=js; j<=je; j++) {
       for (int i=is; i<=ie; i++) {
 
-      pfield->b.x3f(k,j,i) = (Grid_Ay(k,j,i+1)-Grid_Ay(k,j,i))/dx1 -
-        (Grid_Ax(k,j+1,i)-Grid_Ax(k,j,i))/dx2;
+      pfield->b.x3f(k,j,i) = (Ay(k,j,i+1)-Ay(k,j,i))/dx1 -
+        (Ax(k,j+1,i)-Ax(k,j,i))/dx2;
 
       }
     }
     }
     
-    Grid_Ax.DeleteAthenaArray();
-    Grid_Ay.DeleteAthenaArray();
-    Grid_Az.DeleteAthenaArray();
+    Ax.DeleteAthenaArray();
+    Ay.DeleteAthenaArray();
+    Az.DeleteAthenaArray();
+
+    delete [] Axf;
+    delete [] Ayf;
+    delete [] Azf;
 
   }
 
@@ -912,8 +957,8 @@ namespace {
 
   }
 
-  void ReadField(std::string filename, Real ax[], Real ay[], Real az[],
-      Real xcoords[], Real ycoords[], Real zcoords[])
+  void ReadFieldCoords(std::string filename, Real xcoords[], Real ycoords[], 
+                       Real zcoords[])
   {
 
     hid_t   file_id, dataset, dataspace, memspace;
@@ -942,21 +987,77 @@ namespace {
                     H5S_ALL, H5P_DEFAULT, zcoords);
     H5Dclose(dataset);
 
+    H5Fclose(file_id);
+
+    return;
+
+  }
+
+  void ReadField(std::string filename, const int ibegin, const int jbegin,
+                       const int kbegin, const int iend, const int jend,
+                       const int kend, Real Axf[], Real Ayf[], Real Azf[])
+  {
+
+    hid_t   file_id, dataset, dataspace, memspace, dxfer_template;
+    herr_t  status;
+
+    hsize_t start[3], stride[3], count[3], dims[3];
+
+    int rank, ierr;
+
+    rank = 3;
+
+    start[0] = ibegin;
+    start[1] = jbegin;
+    start[2] = kbegin;
+
+    stride[0] = 1;
+    stride[1] = 1;
+    stride[2] = 1;
+
+    count[0] = iend-ibegin+1;
+    count[1] = jend-jbegin+1;
+    count[2] = kend-kbegin+1;
+
+    dims[0] = count[0];
+    dims[1] = count[1];
+    dims[2] = count[2];
+
+    file_id = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+
     std::cout << "Read vector field." << std::endl;
 
-    dataset = H5Dopen(file_id, "/vector_potential_x", H5P_DEFAULT);
-    status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
-                    H5S_ALL, H5P_DEFAULT, ax);
+    dataset = H5Dopen(file_id, "magnetic_vector_potential_x", H5P_DEFAULT);
+    dataspace = H5Dget_space(dataset);
+    status = H5Sselect_hyperslab(dataspace, H5S_SELECT_SET, start,
+                                 stride, count, NULL);
+    memspace = H5Screate_simple(rank, dims, NULL);
+    status = H5Dread(dataset, H5T_NATIVE_DOUBLE, memspace, dataspace,
+                     H5P_DEFAULT, Axf);
+    H5Sclose(memspace);
+    H5Sclose(dataspace);
     H5Dclose(dataset);
 
-    dataset = H5Dopen(file_id, "/vector_potential_y", H5P_DEFAULT);
-    status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
-        H5S_ALL, H5P_DEFAULT, ay);
+    dataset = H5Dopen(file_id, "magnetic_vector_potential_y", H5P_DEFAULT);
+    dataspace = H5Dget_space(dataset);
+    status = H5Sselect_hyperslab(dataspace, H5S_SELECT_SET, start,
+                                 stride, count, NULL);
+    memspace = H5Screate_simple(rank, dims, NULL);
+    status = H5Dread(dataset, H5T_NATIVE_DOUBLE, memspace, dataspace,
+                     H5P_DEFAULT, Ayf);
+    H5Sclose(memspace);
+    H5Sclose(dataspace);
     H5Dclose(dataset);
 
-    dataset = H5Dopen(file_id, "/vector_potential_z", H5P_DEFAULT);
-    status = H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL,
-                    H5S_ALL, H5P_DEFAULT, az);
+    dataset = H5Dopen(file_id, "magnetic_vector_potential_z", H5P_DEFAULT);
+    dataspace = H5Dget_space(dataset);
+    status = H5Sselect_hyperslab(dataspace, H5S_SELECT_SET, start,
+                                 stride, count, NULL);
+    memspace = H5Screate_simple(rank, dims, NULL);
+    status = H5Dread(dataset, H5T_NATIVE_DOUBLE, memspace, dataspace,
+                     H5P_DEFAULT, Azf);
+    H5Sclose(memspace);
+    H5Sclose(dataspace);
     H5Dclose(dataset);
 
     H5Fclose(file_id);
@@ -1010,20 +1111,30 @@ namespace {
 
   }
 
-  Real VecPot(Real *field, Real xx, Real yy, Real zz)
+  Real VecPot(Real *field, Real xx, Real yy, Real zz, 
+              const int fdims[], const int fbegin[] )
   {
 
-    if (xx < Axcoords[0]-0.5*Adx || xx > Axcoords[NAx-1]+0.5*Adx ||
-        yy < Aycoords[0]-0.5*Ady || yy > Aycoords[NAy-1]+0.5*Ady ||
-        zz < Azcoords[0]-0.5*Adz || zz > Azcoords[NAz-1]+0.5*Adz) {
-      return 0.0;
-    }
+    // Indices into the coordinate vectors
+    const int ii = (int)((xx-Axmin)/Adx);
+    const int jj = (int)((yy-Aymin)/Ady);
+    const int kk = (int)((zz-Azmin)/Adz);
 
-    int ii = (int)((xx-(Axcoords[0]-0.5*Adx))/Adx);
-    int jj = (int)((yy-(Aycoords[0]-0.5*Ady))/Ady);
-    int kk = (int)((zz-(Azcoords[0]-0.5*Adz))/Adz);
+    // Indices into the local vector potential patch
+    const int ib = ii - fbegin[0];
+    const int jb = jj - fbegin[1];
+    const int kb = kk - fbegin[2];
 
     Real pot = 0.0;
+  
+    std::stringstream msg;
+
+    if ( ib == 0 || ib == fdims[0]-1 ||
+         jb == 0 || jb == fdims[1]-1 ||
+         kb == 0 || kb == fdims[2]-1 ) {
+      msg << "Input grid is smaller than the simulation domain !!" << std::endl;
+      ATHENA_ERROR(msg);
+    }
 
     for (int i = -1; i <= 1; i++) {
       Real dx = (xx-Axcoords[ii+i])/Adx;
@@ -1031,7 +1142,7 @@ namespace {
         Real dy = (yy-Aycoords[jj+j])/Ady;
         for (int k = -1; k <= 1; k++) {
           Real dz = (zz-Azcoords[kk+k])/Adz;
-          int idx = ii+i + (jj+j)*NAx + (kk+k)*NAx*NAy;
+          int idx = (ib+i)*fdims[2]*fdims[1] + (jb+j)*fdims[2] + (kb+k);
           pot += field[idx]*TSCWeight(dx)*TSCWeight(dy)*TSCWeight(dz);
 
         }
