@@ -78,10 +78,11 @@ namespace {
   static Real *Axcoords, *Aycoords, *Azcoords, Adx, Ady, Adz;  
   static Real Axmin, Axmax, Aymin, Aymax, Azmin, Azmax;
   // Runtime parameters
+  std::string mag_file;
   static int num_halo, main_cluster_fixed, subhalo_gas, sphere_reflevel;
   static Real r_scale, r_cut, min_refine_density, ref_radius1_sq, ref_radius2_sq;
   // Other parameters
-  static int res_flag = 0;
+  static int res_flag = 0, a_in_cgs = 0;
   // Methods
   Real interpolate(Real a[], int n, Real x[], Real xx);
   void ReadNumPoints(std::string filename, int *num_points);
@@ -90,7 +91,9 @@ namespace {
   Real VecPot(Real *field, Real xx, Real yy, Real zz);
   void ReadFieldPoints(std::string filename, int *nbx, int *nby, int *nbz);
   void ReadFieldCoords(std::string filename, Real xcoords[], Real ycoords[], Real zcoords[]);
-  void ReadField(std::string filename, Real ax[], Real ay[], Real az[]);
+  void ReadField(std::string filename, const int ibegin, const int jbegin,
+		 const int kbegin, const int iend, const int jend,
+		 const int kend, Real Axf[], Real Ayf[], Real Azf[]);  
   Real TSCWeight(Real x);
   Real interp_grav_pot(const Real x1, const Real x2, const Real x3);
   Real noninertial_accel(int axis, const Real x1, const Real x2, const Real x3);
@@ -108,8 +111,8 @@ namespace {
 void Mesh::InitUserMeshData(ParameterInput *pin)
 {
 
-  Real x_init, y_init;
-  Real vx_init, vy_init;
+  Real x_init1, y_init1, x_init2, y_init2;
+  Real vx_init1, vy_init1, vx_init2, vy_init2;
 
   num_halo = pin->GetOrAddInteger("problem", "num_halo", 1);
   main_cluster_fixed = pin->GetOrAddInteger("problem", "main_cluster_fixed",1);
@@ -296,7 +299,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin)
     if (Globals::my_rank == 0)
        std::cout << "Reading magnetic field." << std::endl;
 
-    std::string mag_file = pin->GetString("problem","mag_file");
+    mag_file = pin->GetString("problem","mag_file");
     
     if (Globals::my_rank == 0) 
       ReadFieldPoints(mag_file, &NAx, &NAy, &NAz);
@@ -322,17 +325,13 @@ void Mesh::InitUserMeshData(ParameterInput *pin)
 
     if (Axcoords[NAx-1]-Axcoords[0] > 1.0e10) {
       // A-field is in cgs
+      a_in_cgs = 1;
       for (int i=0; i < NAx; i++)
         Axcoords[i] *= RAD_CONV;
       for (int j=0; j < NAy; j++)
         Aycoords[j] *= RAD_CONV;
       for (int k=0; k < NAz; k++)
         Azcoords[k] *= RAD_CONV;
-      for (int i=0; i < num_mag_points; i++) {
-        Ax[i] *= VPOT_CONV;
-        Ay[i] *= VPOT_CONV;
-        Az[i] *= VPOT_CONV;
-      }
     }
 
 #ifdef MPI_PARALLEL
@@ -344,12 +343,12 @@ void Mesh::InitUserMeshData(ParameterInput *pin)
     Adx = Axcoords[1] - Axcoords[0];
     Ady = Aycoords[1] - Aycoords[0];
     Adz = Azcoords[1] - Azcoords[0];
-    Axmin = Axcoord[0]-0.5*Adx;
-    Aymin = Aycoord[0]-0.5*Ady;
-    Azmin = Azcoord[0]-0.5*Adz;
-    Axmax = Axcoord[nAx-1]+0.5*Adx;
-    Aymax = Aycoord[nAy-1]+0.5*Ady;
-    Azmax = Azcoord[nAz-1]+0.5*Adz;
+    Axmin = Axcoords[0]-0.5*Adx;
+    Aymin = Aycoords[0]-0.5*Ady;
+    Azmin = Azcoords[0]-0.5*Adz;
+    Axmax = Axcoords[NAx-1]+0.5*Adx;
+    Aymax = Aycoords[NAy-1]+0.5*Ady;
+    Azmax = Azcoords[NAz-1]+0.5*Adz;
 
     std::stringstream msg;
 
@@ -415,7 +414,7 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin)
           
           Real rr1 = sqrt(SQR(xx1-xmain1)+SQR(xx2-xmain2)+SQR(xx3-xmain3));
           sum_dens1 += interpolate(dens1, num_points1, r1, rr1);
-          sum_pres = interpolate(pres1, num_points1, r1, rr1);
+          sum_pres += interpolate(pres1, num_points1, r1, rr1);
 
           if (num_halo == 2 && subhalo_gas == 1) {
             Real rr2 = sqrt(SQR(xx1-xsub1)+SQR(xx2-xsub2)+SQR(xx3-xsub3));
@@ -429,9 +428,10 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin)
 
     sum_dens1 *= nsubvolinv;
     sum_dens2 *= nsubvolinv;
-  
+    sum_pres *= nsubvolinv;
+
     phydro->u(IDN,k,j,i) = sum_dens1+sum_dens2;
-    phydro->u(IEN,k,j,i) = sum_pres*nsubvolinv/gm1;
+    phydro->u(IEN,k,j,i) = sum_pres/gm1;
     phydro->u(IM1,k,j,i) = sum_dens1*vmain1+sum_dens2*vsub1;
     phydro->u(IM2,k,j,i) = sum_dens1*vmain2+sum_dens2*vsub2;
     phydro->u(IM3,k,j,i) = 0.0;
@@ -473,9 +473,17 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin)
     Ayf = new double [nloc];
     Azf = new double [nloc];
 
-    ReadField( mag_file_id, ibegin, jbegin, kbegin,
+    ReadField( mag_file, ibegin, jbegin, kbegin,
                iend, jend, kend, Axf, Ayf, Azf );
 
+    if (a_in_cgs) {
+      for (int i=0; i < nloc; i++) {
+        Axf[i] *= VPOT_CONV;
+        Ayf[i] *= VPOT_CONV;
+        Azf[i] *= VPOT_CONV;
+      }
+    }
+   
     int sample_res  = (int)std::pow(2.0, pmy_mesh->max_level - loc.level);
     Real sample_fact = 1.0/sample_res;
     Real xl1, xl2, xl3;
